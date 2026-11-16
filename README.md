@@ -53,8 +53,8 @@ docs/decisions.md         选型、踩坑、对 vendor 的改动
 
 ## 还没做
 
-- 关联网文站抓标签、评分、评论，按标签分组、按评分排序（方案见 `docs/sync-and-metadata.md`；豆瓣接口实测可用，起点有 JS 探测墙）
 - 书籍文件本身的 WebDAV 备份（现在只同步书目、进度、书签）
+- 应用内显示书评（不可行，原因见 `docs/novel-sites.md`；除非接各站开放平台的正式 API）
 
 ## 文档
 
@@ -62,6 +62,7 @@ docs/decisions.md         选型、踩坑、对 vendor 的改动
 - [`docs/decisions.md`](docs/decisions.md)：选型、踩坑、对 vendor 的每一处补丁
 - [`docs/RELEASING.md`](docs/RELEASING.md)：发版流程
 - [`docs/sync-and-metadata.md`](docs/sync-and-metadata.md)：WebDAV 同步与网文站关联的调研与方案
+- [`docs/novel-sites.md`](docs/novel-sites.md)：网文站关联的调研与被否掉的方案
 
 ## 兼容性实测
 

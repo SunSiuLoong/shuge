@@ -5,6 +5,7 @@ import {
   Bookmark,
   BookmarkCheck,
   List,
+  MessageSquare,
   Search,
   Type,
 } from 'lucide-vue-next'
@@ -18,6 +19,7 @@ import { buildReaderCSS, READER_PALETTES } from './theme'
 import TocDrawer from './TocDrawer.vue'
 import SettingsSheet from './SettingsSheet.vue'
 import SearchSheet from './SearchSheet.vue'
+import LinkSheet from '../links/LinkSheet.vue'
 
 const props = defineProps<{ bookId: number }>()
 
@@ -31,6 +33,7 @@ const chrome = ref(false)
 const showToc = ref(false)
 const showSettings = ref(false)
 const showSearch = ref(false)
+const showLinks = ref(false)
 const searchRef = ref<InstanceType<typeof SearchSheet> | null>(null)
 
 const fraction = ref(0)
@@ -55,7 +58,9 @@ const bumpChrome = (): void => {
   chrome.value = true
   clearTimeout(hideTimer)
   hideTimer = window.setTimeout(() => {
-    if (!showToc.value && !showSettings.value && !showSearch.value) chrome.value = false
+    if (!showToc.value && !showSettings.value && !showSearch.value && !showLinks.value) {
+      chrome.value = false
+    }
   }, 5000)
 }
 
@@ -464,6 +469,10 @@ onBeforeUnmount(() => {
             <Type :size="19" :stroke-width="1.7" />
             <span>排版</span>
           </button>
+          <button class="rtool" type="button" @click="showLinks = true; bumpChrome()">
+            <MessageSquare :size="19" :stroke-width="1.7" />
+            <span>书评</span>
+          </button>
         </div>
       </footer>
     </Transition>
@@ -491,6 +500,16 @@ onBeforeUnmount(() => {
         :adapter="adapter!"
         @select="jumpSearch"
         @close="showSearch = false"
+      />
+    </Transition>
+
+    <!-- 网文站跳转 -->
+    <Transition name="slide-down">
+      <LinkSheet
+        v-if="showLinks && book"
+        :title="book.title"
+        :author="book.author"
+        @close="showLinks = false"
       />
     </Transition>
 

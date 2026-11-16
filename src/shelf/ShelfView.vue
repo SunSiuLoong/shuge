@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ArrowUpDown, Plus, Settings, Trash2, X } from 'lucide-vue-next'
+import { ArrowUpDown, ExternalLink, Plus, Settings, Trash2, X } from 'lucide-vue-next'
 import type { Book } from '../types'
 import { navigate } from '../router'
 import { importFiles, importState, removeBook } from '../importer/importer'
@@ -17,11 +17,14 @@ import {
 } from './store'
 import { maybeAutoSync } from '../sync'
 import BookCard from './BookCard.vue'
+import LinkSheet from '../links/LinkSheet.vue'
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const scrolled = ref(false)
 const showSort = ref(false)
 const actionBook = ref<Book | null>(null)
+// 「去网文站」选中的书：先关掉操作弹层，再开站点选择
+const linkTarget = ref<{ title: string; author?: string } | null>(null)
 const summary = ref<string | null>(null)
 
 const isEmpty = computed(() => !loading.value && books.value.length === 0)
@@ -79,6 +82,13 @@ const confirmDelete = async (): Promise<void> => {
   await removeBook(book)
   summary.value = `已删除《${book.title}》`
   setTimeout(() => (summary.value = null), 3000)
+}
+
+const openLinkSheet = (): void => {
+  const book = actionBook.value
+  actionBook.value = null
+  if (!book) return
+  linkTarget.value = { title: book.title, author: book.author }
 }
 
 const setSortAndClose = (key: typeof sortKey.value): void => {
@@ -210,6 +220,10 @@ onMounted(() => {
           </button>
         </div>
         <div class="sheet__body">
+          <button class="option" type="button" @click="openLinkSheet">
+            <ExternalLink :size="17" :stroke-width="1.8" />
+            去网文站看书评
+          </button>
           <button class="option option--danger" type="button" @click="confirmDelete">
             <Trash2 :size="17" :stroke-width="1.8" />
             删除这本书
@@ -217,6 +231,16 @@ onMounted(() => {
           <p class="action__note">同时删除本地文件与阅读进度，不可恢复。</p>
         </div>
       </div>
+    </Transition>
+
+    <!-- 网文站跳转 -->
+    <Transition name="slide-down">
+      <LinkSheet
+        v-if="linkTarget"
+        :title="linkTarget.title"
+        :author="linkTarget.author"
+        @close="linkTarget = null"
+      />
     </Transition>
   </div>
 </template>
