@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { Plus, RefreshCw, Star, X } from 'lucide-vue-next'
 import type { Book } from '../types'
 import { patchBook } from '../db'
-import { lookupDouban, lastMetaError } from '../meta/douban'
+import { lookupRating, lastRatingError } from '../meta'
 import { tagsFromName } from '../meta/tags'
 
 const props = defineProps<{ book: Book }>()
@@ -93,26 +93,31 @@ const onKey = (e: KeyboardEvent): void => {
   }
 }
 
-const askDouban = async (): Promise<void> => {
+/** 查评分：豆瓣优先、微信读书兜底，命中谁就用谁，界面上标明来源 */
+const askRating = async (): Promise<void> => {
   if (looking.value) return
   looking.value = true
   hint.value = null
-  const hit = await lookupDouban(props.book.title, props.book.author)
+  const hit = await lookupRating(props.book.title, props.book.author)
   looking.value = false
   if (!hit) {
-    hint.value = lastMetaError.value || '豆瓣没查到这本，网文没出实体书时查不到'
+    hint.value = lastRatingError.value || '两个源都没查到这本，只能手动打分'
     return
   }
   rating.value = hit.rating
   ratingCount.value = hit.count
-  metaSource.value = 'douban'
+  metaSource.value = hit.source
   await persist({
     rating: hit.rating,
     ratingCount: hit.count,
-    metaSource: 'douban',
+    metaSource: hit.source,
     metaUpdatedAt: Date.now(),
   })
-  hint.value = `豆瓣「${hit.matchedTitle}」${hit.rating.toFixed(1)} 分`
+  const via = hit.source === 'douban' ? '豆瓣' : '微信读书'
+  const pct = hit.percent != null ? `（推荐值 ${hit.percent}%）` : ''
+  hint.value = hit.partial
+    ? `${via}只搜到分卷「${hit.matchedTitle}」${hit.rating.toFixed(1)} 分，代表性有限`
+    : `${via}「${hit.matchedTitle}」${hit.rating.toFixed(1)} 分${pct}`
 }
 
 const countLabel = computed(() => {
@@ -120,6 +125,12 @@ const countLabel = computed(() => {
   return ratingCount.value >= 10000
     ? `${(ratingCount.value / 10000).toFixed(1)} 万人评价`
     : `${ratingCount.value} 人评价`
+})
+
+const sourceLabel = computed(() => {
+  if (metaSource.value === 'douban') return '豆瓣'
+  if (metaSource.value === 'weread') return '微信读书'
+  return ''
 })
 </script>
 
@@ -160,12 +171,12 @@ const countLabel = computed(() => {
             </button>
           </div>
           <div class="field__foot">
-            <button class="mini" type="button" :disabled="looking" @click="askDouban">
+            <button class="mini" type="button" :disabled="looking" @click="askRating">
               <RefreshCw :size="13" :stroke-width="2" :class="{ 'is-spin': looking }" />
-              {{ looking ? '查询中' : '查豆瓣评分' }}
+              {{ looking ? '查询中' : '查评分' }}
             </button>
-            <span v-if="metaSource === 'douban' && countLabel" class="field__note">
-              豆瓣 · {{ countLabel }}
+            <span v-if="sourceLabel && countLabel" class="field__note">
+              {{ sourceLabel }} · {{ countLabel }}
             </span>
             <button
               v-if="rating != null"

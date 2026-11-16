@@ -15,12 +15,41 @@ const total = ref(0)
 const current = ref('')
 const msg = ref('')
 const failed = ref(false)
+/** 连已有评分一起重查：v1.10 换了评分源，旧的分卷低分需要刷一遍 */
+const overwrite = ref(false)
 let cancelled = false
 
 const totalCount = computed(() => books.value.length)
 const taggedCount = computed(() => books.value.filter((b) => b.tags?.length).length)
 const ratedCount = computed(() => books.value.filter((b) => b.rating != null).length)
-const missingRated = computed(() => totalCount.value - ratedCount.value)
+/** 待处理数：缺分的一律算，开了覆盖重查再把非手动的已有分算进来 */
+const pendingCount = computed(
+  () =>
+    books.value.filter(
+      (b) => b.rating == null || (overwrite.value && b.metaSource !== 'manual'),
+    ).length,
+)
+
+/** 评分来源分布：豆瓣分和微信读书分的量纲不同，用户有权知道这个数是哪来的 */
+const bySource = computed(() => {
+  const c = { douban: 0, weread: 0, manual: 0 }
+  for (const b of books.value) {
+    if (b.rating == null) continue
+    if (b.metaSource === 'douban') c.douban += 1
+    else if (b.metaSource === 'weread') c.weread += 1
+    else if (b.metaSource === 'manual') c.manual += 1
+  }
+  return c
+})
+
+const sourceSummary = computed(() => {
+  const { douban, weread, manual } = bySource.value
+  const parts: string[] = []
+  if (douban) parts.push(`豆瓣 ${douban}`)
+  if (weread) parts.push(`微信读书 ${weread}`)
+  if (manual) parts.push(`手动 ${manual}`)
+  return parts.join(' · ') || '—'
+})
 
 /** 浏览器里没有中继就查不了豆瓣（没有 CORS 头），App 里走原生请求 */
 const canLookup = computed(() => Capacitor.isNativePlatform() || Boolean(dav.relay.trim()))
@@ -30,17 +59,18 @@ const percent = computed(() =>
 )
 
 const run = async (): Promise<void> => {
-  if (busy.value || !missingRated.value) return
+  if (busy.value || !pendingCount.value) return
   busy.value = true
   failed.value = false
   cancelled = false
   done.value = 0
-  total.value = missingRated.value
+  total.value = pendingCount.value
   msg.value = ''
   try {
     const r = await enrichMany(books.value, {
       tags: false,
       rating: true,
+      overwrite: overwrite.value,
       gap: 600,
       onProgress: (d, t, title) => {
         done.value = d
@@ -50,7 +80,7 @@ const run = async (): Promise<void> => {
       isCancelled: () => cancelled,
     })
     const parts = [`查到 ${r.ok} 本`]
-    if (r.miss) parts.push(`${r.miss} 本豆瓣没收录`)
+    if (r.miss) parts.push(`${r.miss} 本两个源都没收录`)
     if (r.failed) parts.push(`${r.failed} 本请求失败`)
     msg.value = `${cancelled ? '已停止，' : '完成，'}${parts.join('，')}`
   } catch (e) {
@@ -79,18 +109,31 @@ const stop = (): void => {
       <span>已有评分</span>
       <span class="line__value">{{ ratedCount }} / {{ totalCount }}</span>
     </div>
+    <div v-if="ratedCount" class="line line--sub">
+      <span>评分来源</span>
+      <span class="line__value">{{ sourceSummary }}</span>
+    </div>
 
     <div class="actions">
       <button
         class="btn btn--primary"
         type="button"
-        :disabled="busy || !canLookup || !missingRated"
+        :disabled="busy || !canLookup || !pendingCount"
         @click="run"
       >
-        {{ busy ? '查询中…' : `补全评分（${missingRated} 本）` }}
+        {{ busy ? '查询中…' : `补全评分（${pendingCount} 本）` }}
       </button>
       <button v-if="busy" class="btn" type="button" @click="stop">停止</button>
     </div>
+
+    <label class="line line--switch">
+      <span>连已有评分一起重查</span>
+      <input v-model="overwrite" class="toggle" type="checkbox" :disabled="busy" />
+    </label>
+    <p class="hint hint--tight">
+      旧版本只查了豆瓣，很多网文拿到的是「分卷分」（整套《剑来》只有 7.0）。打开这个开关会把
+      已有的豆瓣分按新规则重刷一遍，手动打的分不会被覆盖。
+    </p>
 
     <div v-if="busy" class="progress">
       <div class="progress__bar"><i :style="{ width: `${percent}%` }" /></div>
@@ -101,13 +144,14 @@ const stop = (): void => {
 
     <p v-if="msg" class="hint" :class="{ 'is-error': failed }">{{ msg }}</p>
     <p v-if="!canLookup" class="hint">
-      在浏览器里查豆瓣需要先在同步设置里填中继地址；装成 App 后走原生请求，不用中继。
+      在浏览器里查评分需要先在同步设置里填中继地址；装成 App 后走原生请求，不用中继。
     </p>
 
     <p class="note">
       标签在导入时从书名里提取（<code>[游戏异界]</code>、<code>【玄幻】</code>
-      这类），也可以长按书籍手动加。评分来自豆瓣，只取分数与评价人数，不抓短评、不抓标签。
-      豆瓣没收录的书（多数连载网文）查不到就是查不到，需要手动打分。
+      这类），也可以长按书籍手动加。评分先查豆瓣，查不到再查微信读书，都只取分数与人数，
+      不抓短评、不抓评论正文。豆瓣只搜到分卷的（如整套《剑来》），会用微信读书的全书评分。
+      两个源都没有的书，需要手动打分。
     </p>
   </section>
 </template>
@@ -133,6 +177,13 @@ const stop = (): void => {
   min-height: 44px;
   font-size: 14px;
   color: var(--text);
+}
+
+/* 来源分布是二级信息，压低一行高度，不然这个区块太长 */
+.line--sub {
+  min-height: 32px;
+  font-size: 12.5px;
+  color: var(--text-2);
 }
 
 .line__value {
@@ -202,6 +253,25 @@ const stop = (): void => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.line--switch {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.toggle {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  accent-color: var(--accent);
+}
+
+/* 开关下面那句说明要贴着，不然和上面的行距一样会看成另一块 */
+.hint--tight {
+  margin: 2px 0 10px;
+  font-size: 11.5px;
+  color: var(--text-3);
 }
 
 .hint {

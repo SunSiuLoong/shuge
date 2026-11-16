@@ -44,8 +44,8 @@ export interface Book {
   rating?: number
   /** 豆瓣评价人数，只用于展示「8.6 · 1.2万人评」 */
   ratingCount?: number
-  /** 评分来源，用来区分豆瓣抓的和自己打的 */
-  metaSource?: 'douban' | 'manual' | 'epub' | 'filename'
+  /** 评分来源，用来区分抓的和自己打的 */
+  metaSource?: 'douban' | 'weread' | 'manual' | 'epub' | 'filename'
   /** 元数据最近补全时间 */
   metaUpdatedAt?: number
   sourceRefs?: SourceRef[]

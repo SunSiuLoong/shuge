@@ -1,24 +1,22 @@
 import { ref } from 'vue'
 import { Capacitor, CapacitorHttp } from '@capacitor/core'
 import { dav } from '../sync/webdav'
+import { MATCH_FLOOR, normTitle, scoreOf, sliceJsonObject } from './match'
+import type { RatingHit } from './types'
 
 /**
- * 豆瓣评分查询：只取「评分数字 + 评价人数」，不取短评、不取评论正文、不取标签。
+ * 豆瓣评分查询：只取「评分数字 + 评价人数」，不取短评、不取评论正文。
  *
- * 两条路：
- *   - APK：Capacitor 原生 HTTP 直连，不受同源策略约束；
- *   - 浏览器：走 relay 的 /api/meta/douban（豆瓣不返回 CORS 头，前端直连必被拦）。
+ * 主路径是搜索结果页——那一页的 `window.__DATA__` 里每条结果直接带 rating，
+ * 一次请求就够；`subject_suggest` 那套两步的留着当兜底，因为它的覆盖范围更窄
+ * （《剑来》在豆瓣有条目，但 suggest 一条都不返回，搜索结果页反而能搜到）。
  *
- * 命中率实测（2026-11-16）：出版过的网文能查到（诡秘之主 8.5、斗破苍穹 6.5、三体 8.9），
- * 没出过实体书的查不到（剑来、秘术纪元返回空）。查不到就是查不到，不编一个分数出来。
+ * 已知短板：豆瓣对网文常常只有「分卷」评分。查《剑来》会命中《剑来1：少年起微末》
+ * 7.0 分（2463 人），拿它当全书分数会明显偏低——所以上层会拿微信读书的全书评分对比，
+ * 只在豆瓣精确同名时才优先用豆瓣。见 `lookupRating`。
  */
 
-export interface DoubanRating {
-  rating: number
-  count?: number
-  doubanId: string
-  matchedTitle: string
-}
+export { normTitle }
 
 /** 最近一次失败原因，给界面提示用；成功时清空 */
 export const lastMetaError = ref<string | null>(null)
@@ -26,30 +24,12 @@ export const lastMetaError = ref<string | null>(null)
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 
-/** 书名归一化：全半角、书名号、括注、空白都抹掉再比 */
-export const normTitle = (s: string): string =>
-  (s || '')
-    .replace(/[《》「」『』]/g, '')
-    .replace(/[（(][^）)]*[）)]/g, '')
-    .replace(/[\s\u3000·・\-—_、,，。.!！?？:：'"“”]/g, '')
-    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
-    .toLowerCase()
-
-const scoreOf = (candTitle: string, candAuthor: string, title: string, author?: string): number => {
-  const a = normTitle(candTitle)
-  const b = normTitle(title)
-  if (!a || !b) return 0
-  let s = 0
-  if (a === b) s = 100
-  else if (a.includes(b) || b.includes(a)) s = 60
-  else return 0
-  // 作者对得上再加分，避免同名书选错版本
-  if (author && author !== '佚名') {
-    const na = normTitle(author)
-    const ca = normTitle(candAuthor)
-    if (ca && (ca.includes(na) || na.includes(ca))) s += 30
-  }
-  return s
+interface SearchItem {
+  tpl_name?: string
+  title?: string
+  id?: number | string
+  url?: string
+  rating?: { value?: number; count?: number }
 }
 
 interface SuggestItem {
@@ -59,36 +39,75 @@ interface SuggestItem {
   type?: string
 }
 
-const pickBest = (items: SuggestItem[], title: string, author?: string): SuggestItem | null => {
-  let best: SuggestItem | null = null
+/** 从搜索结果页 HTML 里挑出最匹配的一条；解析不出来返回 undefined（表示要回退） */
+const pickFromSearchPage = (html: string, title: string, author?: string): RatingHit | null | undefined => {
+  const at = html.indexOf('window.__DATA__')
+  if (at < 0) return undefined
+  const data = sliceJsonObject(html, at) as { items?: SearchItem[] } | null
+  if (!data || !Array.isArray(data.items)) return undefined
+
+  const items = data.items.filter(
+    (x) => x?.tpl_name === 'search_subject' && x.rating && Number(x.rating.value) > 0,
+  )
+  let best: SearchItem | null = null
   let bestScore = 0
+  let bestCount = -1
   for (const it of items) {
-    if (!it?.id || (it.type && it.type !== 'b')) continue
-    const s = scoreOf(it.title ?? '', it.author_name ?? '', title, author)
-    if (s > bestScore) {
+    const s = scoreOf(it.title ?? '', '', title, author)
+    const cnt = Number(it.rating?.count ?? 0)
+    // 同分取评价人数多的：同一本书的不同版本、不同分册会一起列出来
+    if (s > bestScore || (s === bestScore && cnt > bestCount)) {
       bestScore = s
+      bestCount = cnt
       best = it
     }
   }
-  // 低于 60 说明连书名都没对上，宁可留空
-  return bestScore >= 60 ? best : null
+  if (!best || bestScore < MATCH_FLOOR) return null
+  return {
+    rating: Number(best.rating?.value),
+    count: best.rating?.count,
+    source: 'douban',
+    matchedTitle: best.title ?? title,
+    url: best.url || (best.id ? `https://book.douban.com/subject/${best.id}/` : undefined),
+  }
 }
 
 const relayBase = (): string => (dav.relay || '').replace(/\/+$/, '')
 
-/** 原生直连：suggest 找 id → rexxar 取评分 */
-const lookupNative = async (title: string, author?: string): Promise<DoubanRating | null> => {
+/** App 内直连：搜索结果页一次拿全，结构变了再退回 suggest + rexxar */
+const lookupNative = async (title: string, author?: string): Promise<RatingHit | null> => {
   const sRes = await CapacitorHttp.get({
+    url: `https://search.douban.com/book/subject_search?search_text=${encodeURIComponent(title)}`,
+    headers: { 'User-Agent': UA, 'Accept-Language': 'zh-CN,zh;q=0.9' },
+    responseType: 'text',
+    connectTimeout: 8000,
+    readTimeout: 10000,
+  })
+  const html = typeof sRes.data === 'string' ? sRes.data : ''
+  const hit = pickFromSearchPage(html, title, author)
+  if (hit !== undefined) return hit
+
+  // ---- 兜底：suggest 找 id → rexxar 取评分 ----
+  const gRes = await CapacitorHttp.get({
     url: `https://book.douban.com/j/subject_suggest?q=${encodeURIComponent(title)}`,
     headers: { 'User-Agent': UA },
     connectTimeout: 8000,
     readTimeout: 8000,
   })
-  const items = (typeof sRes.data === 'string' ? JSON.parse(sRes.data) : sRes.data) as
+  const items = (typeof gRes.data === 'string' ? JSON.parse(gRes.data) : gRes.data) as
     | SuggestItem[]
     | null
-  const best = pickBest(items ?? [], title, author)
-  if (!best) return null
+  let best: SuggestItem | null = null
+  let bestScore = 0
+  for (const it of items ?? []) {
+    if (!it?.id || (it.type && it.type !== 'b')) continue
+    const s = scoreOf(it.title ?? '', it.author_name, title, author)
+    if (s > bestScore) {
+      bestScore = s
+      best = it
+    }
+  }
+  if (!best || bestScore < MATCH_FLOOR) return null
 
   const dRes = await CapacitorHttp.get({
     url: `https://m.douban.com/rexxar/api/v2/book/${best.id}?ck=&for_mobile=1`,
@@ -104,31 +123,30 @@ const lookupNative = async (title: string, author?: string): Promise<DoubanRatin
   return {
     rating: Number(value),
     count: detail?.rating?.count,
-    doubanId: String(best.id),
+    source: 'douban',
     matchedTitle: best.title ?? title,
+    url: `https://book.douban.com/subject/${best.id}/`,
   }
 }
 
-/** 浏览器走 relay；relay 自己完成两步请求 */
-const lookupRelay = async (title: string, author?: string): Promise<DoubanRating | null> => {
+/** 浏览器：豆瓣不返回 CORS 头，只能走 relay */
+const lookupRelay = async (title: string, author?: string): Promise<RatingHit | null> => {
   const base = relayBase()
   if (!base) {
-    lastMetaError.value = '浏览器里查豆瓣需要先在中继地址填上 relay 部署地址'
+    lastMetaError.value = '浏览器里查评分需要先在同步设置里填中继地址'
     return null
   }
   const qs = new URLSearchParams({ title })
   if (author) qs.set('author', author)
   const ctl = new AbortController()
-  const timer = setTimeout(() => ctl.abort(), 12000)
+  const timer = setTimeout(() => ctl.abort(), 20000)
   try {
     const res = await fetch(`${base}/api/meta/douban?${qs.toString()}`, { signal: ctl.signal })
     if (!res.ok) {
       lastMetaError.value = `中继返回 ${res.status}`
       return null
     }
-    const data = (await res.json()) as
-      | ({ ok: true } & DoubanRating)
-      | { ok: false; reason?: string }
+    const data = (await res.json()) as ({ ok: true } & RatingHit) | { ok: false; reason?: string }
     if (!('ok' in data) || data.ok !== true) {
       lastMetaError.value = ('reason' in data && data.reason) || '未查到这本书的评分'
       return null
@@ -136,8 +154,9 @@ const lookupRelay = async (title: string, author?: string): Promise<DoubanRating
     return {
       rating: data.rating,
       count: data.count,
-      doubanId: data.doubanId,
+      source: 'douban',
       matchedTitle: data.matchedTitle,
+      url: data.url,
     }
   } catch (e) {
     lastMetaError.value =
@@ -148,11 +167,7 @@ const lookupRelay = async (title: string, author?: string): Promise<DoubanRating
   }
 }
 
-export const lookupDouban = async (
-  title: string,
-  author?: string,
-): Promise<DoubanRating | null> => {
-  lastMetaError.value = null
+export const lookupDouban = async (title: string, author?: string): Promise<RatingHit | null> => {
   try {
     return Capacitor.isNativePlatform()
       ? await lookupNative(title, author)
