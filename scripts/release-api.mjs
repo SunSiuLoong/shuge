@@ -119,51 +119,40 @@ if (headSha === git('rev-parse', 'HEAD')) {
   console.log(`✓ main 已更新到 ${commit.sha.slice(0, 7)}`)
 }
 
-// tag：已存在且指向别的提交时先删再建（同一版本重打包会重发）
+// 同一版本重打包：旧 tag 与旧 Release 一并清掉再重建。
+// 坑一：直接删 tag 会让挂在它下面的 Release 变成草稿，而草稿在 releases/tags 里查不到，
+//       下一轮会再建一个同名 Release，列表里出现两个 v1.x.0。
+// 坑二：GitHub 会丢掉 asset 名里的中文（书阁-v1.12.0-debug.apk → -v1.12.0-debug.apk），
+//       所以 asset 一律用 ASCII 名，本地 APK 文件名保持不变。
 const mainSha = (await api(`/repos/${OWNER}/${REPO}/git/ref/heads/main`)).object.sha
-try {
-  const old = await api(`/repos/${OWNER}/${REPO}/git/ref/tags/${tag}`)
-  if (old.object.sha !== mainSha) {
-    await api(`/repos/${OWNER}/${REPO}/git/refs/tags/${tag}`, 'DELETE')
-    await api(`/repos/${OWNER}/${REPO}/git/refs`, 'POST', {
-      ref: `refs/tags/${tag}`,
-      sha: mainSha,
-    })
-    console.log(`· tag ${tag} 已重指向新提交`)
-  } else {
-    console.log(`· tag ${tag} 已存在`)
-  }
-} catch {
-  await api(`/repos/${OWNER}/${REPO}/git/refs`, 'POST', { ref: `refs/tags/${tag}`, sha: mainSha })
-  console.log(`✓ tag ${tag}`)
+const allReleases = await api(`/repos/${OWNER}/${REPO}/releases?per_page=100`)
+for (const r of allReleases.filter((r) => r.tag_name === tag)) {
+  await api(`/repos/${OWNER}/${REPO}/releases/${r.id}`, 'DELETE')
+  console.log(`· 已清掉旧 Release ${r.id}${r.draft ? '（草稿）' : ''}`)
 }
-
-// Release
-let release = null
 try {
-  const list = await api(`/repos/${OWNER}/${REPO}/releases/tags/${tag}`)
-  release = list
-  console.log(`· Release 已存在：${release.html_url}`)
+  await api(`/repos/${OWNER}/${REPO}/git/refs/tags/${tag}`, 'DELETE')
 } catch {
-  release = await api(`/repos/${OWNER}/${REPO}/releases`, 'POST', {
-    tag_name: tag,
-    name: `${tag} · ${headline}`,
-    body,
-    draft: false,
-    prerelease: false,
-  })
-  console.log(`✓ Release ${release.html_url}`)
+  /* 没有旧 tag，正常 */
 }
+await api(`/repos/${OWNER}/${REPO}/git/refs`, 'POST', { ref: `refs/tags/${tag}`, sha: mainSha })
+console.log(`✓ tag ${tag} → ${mainSha.slice(0, 7)}`)
 
-// APK 作为 asset
-const assets = await api(`/repos/${OWNER}/${REPO}/releases/${release.id}/assets`)
-const apkName = apkPath.split(/[\\/]/).pop()
-if (assets.some((a) => a.name === apkName)) {
-  console.log(`· ${apkName} 已挂在这个 Release 上`)
-} else {
+const release = await api(`/repos/${OWNER}/${REPO}/releases`, 'POST', {
+  tag_name: tag,
+  name: `${tag} · ${headline}`,
+  body,
+  draft: false,
+  prerelease: false,
+})
+console.log(`✓ Release ${release.html_url}`)
+
+// APK 作为 asset（ASCII 名，见上「坑二」）
+const apkName = `shuge-${tag}-debug.apk`
+{
   const buf = readFileSync(apkPath)
   const res = await fetch(
-    `https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${release.id}/assets?name=${encodeURIComponent(apkName)}`,
+    `https://uploads.github.com/repos/${OWNER}/${REPO}/releases/${release.id}/assets?name=${apkName}`,
     {
       method: 'POST',
       headers: {
