@@ -32,8 +32,15 @@ node scripts/release.mjs           # 真的发
 
 任一步失败就停，不会「代码推上去了但说法没写」。
 
-## 版本号规则
+## 版本号规则（2026-11-16 用户定）
 
+| 改动性质 | 版本怎么走 | 例子 |
+|---|---|---|
+| 加功能、改交互 | 第二位 +1，第三位归零 | 1.10.0 → **1.11.0** |
+| 只修 BUG | 第三位 +1 | 1.11.0 → **1.11.1** |
+
+- 每次改动都要**自动打包 + 发版**：`node scripts/apk.mjs && node scripts/release.mjs`。
+- `scripts/apk.mjs` 会按 `src/version.ts` 同步 Android 的 `versionName` / `versionCode`，产物落在 `release/书阁-v<版本>-debug.apk`。
 - `src/version.ts` 是唯一来源，设置页显示的也是它。
 - CHANGELOG 标题固定 `## vX.Y.Z · 日期（一句话主题）`，段落内每条一行，别写小标题。
 - 不传 APK 到仓库：`release/` 与 `*.apk` 都在 `.gitignore` 里。安装包走本地产物，GitHub 上只留代码与更新记录。

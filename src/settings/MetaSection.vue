@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { books } from '../shelf/store'
 import { enrichMany } from '../meta'
+import { autoLinkEnabled, autoLinkState, setAutoLink } from '../meta/autolink'
 import { dav } from '../sync/webdav'
 
 /**
@@ -22,6 +23,7 @@ let cancelled = false
 const totalCount = computed(() => books.value.length)
 const taggedCount = computed(() => books.value.filter((b) => b.tags?.length).length)
 const ratedCount = computed(() => books.value.filter((b) => b.rating != null).length)
+const linkedCount = computed(() => books.value.filter((b) => b.link).length)
 /** 待处理数：缺分的一律算，开了覆盖重查再把非手动的已有分算进来 */
 const pendingCount = computed(
   () =>
@@ -109,6 +111,13 @@ const stop = (): void => {
       <span>已有评分</span>
       <span class="line__value">{{ ratedCount }} / {{ totalCount }}</span>
     </div>
+    <div class="line line--sub">
+      <span>已关联评分站</span>
+      <span class="line__value">
+        {{ linkedCount }} / {{ totalCount }}<template v-if="autoLinkState.queued">
+          · 后台匹配 {{ autoLinkState.queued }} 本</template>
+      </span>
+    </div>
     <div v-if="ratedCount" class="line line--sub">
       <span>评分来源</span>
       <span class="line__value">{{ sourceSummary }}</span>
@@ -125,6 +134,20 @@ const stop = (): void => {
       </button>
       <button v-if="busy" class="btn" type="button" @click="stop">停止</button>
     </div>
+
+    <label class="line line--switch">
+      <span>导入后自动关联评分站</span>
+      <input
+        class="toggle"
+        type="checkbox"
+        :checked="autoLinkEnabled"
+        @change="setAutoLink(($event.target as HTMLInputElement).checked)"
+      />
+    </label>
+    <p class="hint hint--tight">
+      导入完成后在后台逐本查询，自动挑「评分人数最多」的那一条（豆瓣或微信读书），
+      每本间隔半秒以免被限流。长按书籍可以重新关联。关掉后只在手动点「关联」时联网。
+    </p>
 
     <label class="line line--switch">
       <span>连已有评分一起重查</span>
@@ -149,9 +172,9 @@ const stop = (): void => {
 
     <p class="note">
       标签在导入时从书名里提取（<code>[游戏异界]</code>、<code>【玄幻】</code>
-      这类），也可以长按书籍手动加。评分先查豆瓣，查不到再查微信读书，都只取分数与人数，
-      不抓短评、不抓评论正文。豆瓣只搜到分卷的（如整套《剑来》），会用微信读书的全书评分。
-      两个源都没有的书，需要手动打分。
+      这类），也可以长按书籍手动加。评分与关联信息（书名、作者、书封、人数）来自豆瓣与微信读书，
+      只取这些字段，<strong>不抓短评、不抓评论正文</strong>。评分站都不提供分类字段，
+      所以「类型」显示的是本地提取的题材。先按评分人数挑站，人数一样才比匹配度。
     </p>
   </section>
 </template>

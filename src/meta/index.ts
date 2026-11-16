@@ -1,54 +1,58 @@
 import { ref } from 'vue'
 import { db, patchBook } from '../db'
 import type { Book } from '../types'
-import { lastMetaError, lookupDouban, normTitle } from './douban'
-import { lastWereadError, lookupWeread } from './weread'
+import { lastSourceError, pickBest, searchSources } from './sources'
 import { tagsFromName } from './tags'
-import type { RatingHit } from './types'
+import type { SourceCandidate } from './types'
+import { toBookLink } from './types'
 
 /**
- * 元数据补全入口。
- * - 标签：本地从文件名生成，导入时已写好；这里只负责给老书补齐（版本升级前导入的书没有）。
- * - 评分：豆瓣优先，微信读书兜底。查不到就留空，不猜。
+ * 元数据入口。
+ * - 标签：本地从文件名 / dc:subject 生成，导入时已写好；这里只负责给老书补齐。
+ * - 评分与关联：问各评分站，按「评分人数最多」挑一条自动关联；用户也可以在
+ *   编辑面板里打开候选列表自己挑。
  *
- * 批量补全刻意慢：豆瓣对高频请求会 403，一本之间隔 600ms、并发 2，
+ * 批量查询刻意慢：豆瓣对高频请求会 403，一本之间隔 600ms，
  * 500 本全跑一遍大约 3 分钟——比被封 IP 强。
  */
 
-export type { RatingHit }
+export type { SourceCandidate }
+export { searchSources, lastSourceError, pickBest }
 
-/** 两个源都没查到时给界面看的合并提示 */
+/** 查不到时给界面看的提示 */
 export const lastRatingError = ref<string | null>(null)
 
-/**
- * 双源评分查询。
- *
- * 顺序不是简单的「豆瓣优先」，因为豆瓣对网文常常只有分卷评分：
- * 《剑来》在豆瓣能搜到《剑来1：少年起微末》7.0 分（2463 人），
- * 而微信读书的《剑来》是全集 8.6（15.5 万人）。用前者代表整套书明显偏低。
- *
- * 所以规则是：
- *   1. 豆瓣精确同名 → 用豆瓣（出版物的豆瓣分区分度比推荐值好）
- *   2. 否则问微信读书，命中就用微信读书（覆盖全集/连载，样本也大）
- *   3. 微信读书也没有 → 退回豆瓣的分卷分数，但标 partial，界面要能看出来
- */
-export const lookupRating = async (title: string, author?: string): Promise<RatingHit | null> => {
-  lastRatingError.value = null
-  lastMetaError.value = null
-  lastWereadError.value = null
+/** 查一条最佳候选（评分人数最多）。查不到返回 null，不猜。 */
+export const lookupRating = async (
+  title: string,
+  author?: string,
+): Promise<SourceCandidate | null> => {
+  const list = await searchSources(title, author)
+  const best = pickBest(list)
+  lastRatingError.value = best ? null : lastSourceError.value || '各评分站都没收录这本'
+  return best
+}
 
-  const dbHit = await lookupDouban(title, author)
-  const dbErr = lastMetaError.value
-  if (dbHit && normTitle(dbHit.matchedTitle) === normTitle(title)) return dbHit
+/** 候选 → 书籍字段。关联的意思就是「这本书的评分以这条记录为准」 */
+export const linkPatch = (c: SourceCandidate, auto = false): Partial<Book> => ({
+  rating: c.rating,
+  ratingCount: c.ratingCount,
+  metaSource: c.site,
+  metaUpdatedAt: Date.now(),
+  link: toBookLink(c, auto),
+})
 
-  const wrHit = await lookupWeread(title, author)
-  const wrErr = lastWereadError.value
-  if (wrHit) return wrHit
-  if (dbHit) return { ...dbHit, partial: true }
+export const applyLink = async (
+  bookId: number,
+  c: SourceCandidate,
+  auto = false,
+): Promise<void> => {
+  await patchBook(bookId, linkPatch(c, auto))
+}
 
-  lastRatingError.value =
-    [dbErr, wrErr].filter(Boolean).join('；') || '豆瓣和微信读书都没收录这本'
-  return null
+/** 解除关联：评分退回手动口径，但保留分数本身（用户可能还想留着排序） */
+export const unlinkBook = async (bookId: number): Promise<void> => {
+  await patchBook(bookId, { link: undefined, metaSource: 'manual', metaUpdatedAt: Date.now() })
 }
 
 export interface EnrichPatch {
@@ -57,6 +61,7 @@ export interface EnrichPatch {
   ratingCount?: number
   metaSource?: Book['metaSource']
   metaUpdatedAt?: number
+  link?: Book['link']
 }
 
 /** 给一本书算出「还缺什么」并补上，返回要写入的字段（没有可写的返回 null） */
@@ -78,12 +83,7 @@ export const enrichOne = async (
 
   if (ratingNeeded) {
     const hit = await lookupRating(book.title, book.author)
-    if (hit) {
-      patch.rating = hit.rating
-      patch.ratingCount = hit.count
-      patch.metaSource = hit.source
-      patch.metaUpdatedAt = Date.now()
-    }
+    if (hit) Object.assign(patch, linkPatch(hit, true))
   }
 
   return Object.keys(patch).length ? patch : null

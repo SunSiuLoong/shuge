@@ -30,13 +30,39 @@ export const listBooks = async (): Promise<Book[]> => {
 export const getBook = (id: number): Promise<Book | undefined> => db.books.get(id)
 
 /**
+ * Dexie 的 update 不接受 undefined：`link` 这种对象里只要有一个字段是 undefined，
+ * 整条更新就会抛 DataError（表现是「点了没反应」，很容易误判成 UI 问题）。
+ * 这里深度清一遍：对象里的 undefined 直接删掉，顶层 undefined 存成 null 表示「清空」。
+ */
+const cleanValue = (v: unknown): unknown => {
+  if (Array.isArray(v)) return v.map(cleanValue)
+  if (v && typeof v === 'object' && !(v instanceof Blob) && !(v instanceof Date)) {
+    const out: Record<string, unknown> = {}
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (val === undefined) continue
+      out[k] = cleanValue(val)
+    }
+    return out
+  }
+  return v
+}
+
+const cleanPatch = (patch: Partial<Book>): Record<string, unknown> => {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(patch)) {
+    out[k] = v === undefined ? null : cleanValue(v)
+  }
+  return out
+}
+
+/**
  * 局部更新书籍字段。
  * Book.toc 是递归结构，Dexie 的 UpdateSpec 映射类型会因此报 TS2615，故在此收敛掉类型。
  */
 export const patchBook = (id: number, patch: Partial<Book>): Promise<number> =>
   (db.books as unknown as {
-    update: (key: number, changes: Partial<Book>) => Promise<number>
-  }).update(id, patch)
+    update: (key: number, changes: Record<string, unknown>) => Promise<number>
+  }).update(id, cleanPatch(patch))
 
 export const findByFingerprint = (fingerprint: string): Promise<Book | undefined> =>
   db.books.where('fingerprint').equals(fingerprint).first()

@@ -3,6 +3,7 @@ import { db, findByFingerprint } from '../db'
 import type { Book } from '../types'
 import { getStorageInfo, hashFile, putBookFile, deleteBookFile } from '../storage/opfs'
 import { parseEpub } from './parse'
+import { enqueueAutoLink } from '../meta/autolink'
 
 export interface ImportResult {
   name: string
@@ -99,6 +100,8 @@ export const importFiles = async (files: File[]): Promise<ImportResult[]> => {
         }
         const bookId = await db.books.add(record)
         results.push({ name: file.name, status: 'added', bookId: bookId as number })
+        // 后台排队去匹配评分站，不等它——导入不应该被网络拖慢
+        enqueueAutoLink(bookId as number)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         results.push({

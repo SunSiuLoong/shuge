@@ -20,6 +20,10 @@ export interface SyncBook {
   lastOpenedAt?: number
   tags?: string[]
   rating?: number
+  ratingCount?: number
+  metaSource?: Book['metaSource']
+  /** 关联的评分站记录：换设备后不该重新挑一遍 */
+  link?: Book['link']
 }
 
 export interface SyncProgress {
@@ -105,6 +109,9 @@ export const buildSnapshot = async (): Promise<Snapshot> => {
     lastOpenedAt: b.lastOpenedAt,
     tags: b.tags,
     rating: b.rating,
+    ratingCount: b.ratingCount,
+    metaSource: b.metaSource,
+    link: b.link,
   })
 
   const toProgress = (p: Progress): SyncProgress | null => {
@@ -170,6 +177,9 @@ export const mergeSnapshot = (
       title: isFilled(b.title) ? b.title : r.title,
       tags: b.tags?.length ? b.tags : r.tags,
       rating: b.rating ?? r.rating,
+      ratingCount: b.ratingCount ?? r.ratingCount,
+      metaSource: b.metaSource ?? r.metaSource,
+      link: b.link ?? r.link,
       lastOpenedAt: Math.max(b.lastOpenedAt ?? 0, r.lastOpenedAt ?? 0) || undefined,
     })
   }
@@ -256,9 +266,24 @@ export const applySnapshot = async (
   for (const sb of snapshot.books) {
     const book = byFp.get(sb.fingerprint)
     if (!book?.id) continue
-    if (!isFilled(book.author) && isFilled(sb.author)) {
-      await patchBook(book.id, { author: sb.author })
-      authors += 1
+    const patch: Partial<Book> = {}
+    if (!isFilled(book.author) && isFilled(sb.author)) patch.author = sb.author
+    // 元数据只补空：本地已有的评分/关联是用户或本机查到的，不该被远端旧值覆盖
+    if (book.rating == null && sb.rating != null) patch.rating = sb.rating
+    if (book.ratingCount == null && sb.ratingCount != null) patch.ratingCount = sb.ratingCount
+    if (!book.metaSource && sb.metaSource) patch.metaSource = sb.metaSource
+    if (!book.link && sb.link) {
+      patch.link = sb.link
+      // 关联记录里带了评分，缺评分时一起补上，省一次联网查询
+      if (patch.rating == null && book.rating == null) patch.rating = sb.link.rating
+      if (patch.ratingCount == null && book.ratingCount == null) {
+        patch.ratingCount = sb.link.ratingCount
+      }
+      if (!book.metaSource) patch.metaSource = sb.link.site
+    }
+    if (Object.keys(patch).length) {
+      await patchBook(book.id, patch)
+      if (patch.author) authors += 1
     }
   }
 

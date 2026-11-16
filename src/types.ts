@@ -5,6 +5,33 @@ export interface TocItem {
   depth: number
 }
 
+/** 能给出评分的站点。加新源时这里的联合类型与 meta/sources.ts 的注册表要一起改 */
+export type LinkSite = 'douban' | 'weread'
+
+/**
+ * 关联到某个评分站上的那条书目记录。
+ *
+ * 存整条而不是只存站名，因为用户重新关联时选的是「哪一条」——
+ * 同一本书在豆瓣可能是分卷（《剑来1》7.0），在微信读书是全集（《剑来》8.6），
+ * 界面要把当时选中的书名、作者、封面、类型、评分原样展示出来。
+ */
+export interface BookLink {
+  site: LinkSite
+  siteName: string
+  bookId?: string
+  title: string
+  author: string
+  coverUrl?: string
+  /** 站点的类型/分类。豆瓣与微信读书都不提供，留空时界面回退到本地标签 */
+  categories?: string[]
+  rating: number
+  ratingCount?: number
+  url?: string
+  linkedAt: number
+  /** true = 导入时自动挑的「评分人数最多」那条，false = 用户自己选的 */
+  auto?: boolean
+}
+
 export type SourceSite = 'qidian' | 'fanqie' | 'yousuu' | 'lkong' | 'other'
 
 /** 预留：网文站关联引用 */
@@ -45,7 +72,9 @@ export interface Book {
   /** 豆瓣评价人数，只用于展示「8.6 · 1.2万人评」 */
   ratingCount?: number
   /** 评分来源，用来区分抓的和自己打的 */
-  metaSource?: 'douban' | 'weread' | 'manual' | 'epub' | 'filename'
+  metaSource?: LinkSite | 'manual' | 'epub' | 'filename'
+  /** 关联的评分站书目；有它时评分/人数/来源都以它为准 */
+  link?: BookLink
   /** 元数据最近补全时间 */
   metaUpdatedAt?: number
   sourceRefs?: SourceRef[]

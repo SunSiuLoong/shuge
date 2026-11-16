@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Plus, RefreshCw, Star, X } from 'lucide-vue-next'
-import type { Book } from '../types'
+import { Check, Link2, Plus, Star, X } from 'lucide-vue-next'
+import type { Book, BookLink } from '../types'
 import { patchBook } from '../db'
-import { lookupRating, lastRatingError } from '../meta'
+import { lastSourceError, searchSources } from '../meta'
+import type { SourceCandidate } from '../meta'
+import { toBookLink } from '../meta/types'
 import { tagsFromName } from '../meta/tags'
 
 const props = defineProps<{ book: Book }>()
@@ -17,9 +19,15 @@ const tags = ref<string[]>([...(props.book.tags ?? [])])
 const rating = ref<number | null>(props.book.rating ?? null)
 const ratingCount = ref<number | undefined>(props.book.ratingCount)
 const metaSource = ref<Book['metaSource']>(props.book.metaSource)
+const link = ref<BookLink | undefined>(props.book.link)
 const draft = ref('')
-const looking = ref(false)
 const hint = ref<string | null>(null)
+
+/** 关联面板：打开时现查，不缓存——评分人数是一直在涨的 */
+const pickerOpen = ref(false)
+const picking = ref(false)
+const pickError = ref<string | null>(null)
+const candidates = ref<SourceCandidate[]>([])
 
 /** 最多 6 个标签，再多书架上的筛选条就没法看了 */
 const MAX_TAGS = 6
@@ -36,9 +44,11 @@ const starFillPx = (i: number): string => {
   return `${(ratio * STAR_PX).toFixed(1)}px`
 }
 
-const ratingText = computed(() => (rating.value != null && rating.value > 0 ? rating.value.toFixed(1) : '未评分'))
+const ratingText = computed(() =>
+  rating.value != null && rating.value > 0 ? rating.value.toFixed(1) : '未评分',
+)
 
-const candidates = computed(() => {
+const tagCandidates = computed(() => {
   const have = new Set(tags.value)
   return tagsFromName(props.book.title, props.book.author)
     .map((t) => t.name)
@@ -50,10 +60,24 @@ const persist = async (patch: Partial<Book>): Promise<void> => {
   await patchBook(props.book.id, patch)
 }
 
+const countText = (n?: number): string => {
+  if (!n) return ''
+  return n >= 10000 ? `${(n / 10000).toFixed(1)} 万人评` : `${n} 人评`
+}
+
+/** 类型：站点的分类字段（目前两个源都没有），拿不到就用本地标签兜底 */
+const typeText = computed(() => {
+  const fromSite = link.value?.categories ?? []
+  const list = fromSite.length ? fromSite : tags.value
+  return list.slice(0, 3).join(' · ')
+})
+
 const setRating = async (value: number | null): Promise<void> => {
   rating.value = value
   metaSource.value = value == null ? undefined : 'manual'
-  await persist({ rating: value ?? undefined, metaSource: metaSource.value })
+  // 手动打分等于否认站点那条记录，关联要跟着断，否则界面会显示「微信读书 8.6」但星星是 4 分
+  if (value != null && link.value) link.value = undefined
+  await persist({ rating: value ?? undefined, metaSource: metaSource.value, link: link.value })
 }
 
 /** 点星星：左半是 x.5，右半是整分（豆瓣是 10 分制，一颗星 = 2 分） */
@@ -93,41 +117,64 @@ const onKey = (e: KeyboardEvent): void => {
   }
 }
 
-/** 查评分：豆瓣优先、微信读书兜底，命中谁就用谁，界面上标明来源 */
-const askRating = async (): Promise<void> => {
-  if (looking.value) return
-  looking.value = true
-  hint.value = null
-  const hit = await lookupRating(props.book.title, props.book.author)
-  looking.value = false
-  if (!hit) {
-    hint.value = lastRatingError.value || '两个源都没查到这本，只能手动打分'
-    return
-  }
-  rating.value = hit.rating
-  ratingCount.value = hit.count
-  metaSource.value = hit.source
-  await persist({
-    rating: hit.rating,
-    ratingCount: hit.count,
-    metaSource: hit.source,
-    metaUpdatedAt: Date.now(),
-  })
-  const via = hit.source === 'douban' ? '豆瓣' : '微信读书'
-  const pct = hit.percent != null ? `（推荐值 ${hit.percent}%）` : ''
-  hint.value = hit.partial
-    ? `${via}只搜到分卷「${hit.matchedTitle}」${hit.rating.toFixed(1)} 分，代表性有限`
-    : `${via}「${hit.matchedTitle}」${hit.rating.toFixed(1)} 分${pct}`
+/**
+ * 打开关联面板：把各评分站的候选按评分人数列出来，用户自己挑。
+ * 不自动选第一条，是因为同名分卷/同名不同书必须让人眼看一眼。
+ */
+const openPicker = async (): Promise<void> => {
+  pickerOpen.value = true
+  picking.value = true
+  pickError.value = null
+  const list = await searchSources(props.book.title, props.book.author)
+  candidates.value = list
+  picking.value = false
+  if (!list.length) pickError.value = lastSourceError.value || '各评分站都没收录这本'
 }
 
-const countLabel = computed(() => {
-  if (!ratingCount.value) return ''
-  return ratingCount.value >= 10000
-    ? `${(ratingCount.value / 10000).toFixed(1)} 万人评价`
-    : `${ratingCount.value} 人评价`
-})
+const closePicker = (): void => {
+  pickerOpen.value = false
+}
+
+const isLinked = (c: SourceCandidate): boolean =>
+  Boolean(
+    link.value &&
+      link.value.site === c.site &&
+      (link.value.bookId ?? link.value.title) === (c.bookId ?? c.title),
+  )
+
+const choose = async (c: SourceCandidate): Promise<void> => {
+  link.value = toBookLink(c, false)
+  rating.value = c.rating
+  ratingCount.value = c.ratingCount
+  metaSource.value = c.site
+  await persist({
+    rating: c.rating,
+    ratingCount: c.ratingCount,
+    metaSource: c.site,
+    metaUpdatedAt: Date.now(),
+    link: link.value,
+  })
+  pickerOpen.value = false
+  const pct = c.percent != null ? `（推荐值 ${c.percent}%）` : ''
+  hint.value = `已关联 ${c.siteName}「${c.title}」${c.rating.toFixed(1)} 分${pct}`
+}
+
+/** 取消关联：分数留着（可能还要按它排序），只是不再声称它来自某个站 */
+const clearLink = async (): Promise<void> => {
+  link.value = undefined
+  metaSource.value = 'manual'
+  hint.value = '已取消关联，评分改为手动'
+  await persist({ link: undefined, metaSource: 'manual', metaUpdatedAt: Date.now() })
+}
+
+/** 封面挂了（防盗链、站点改 CDN）就藏起来，别留个碎图标 */
+const hideCover = (e: Event): void => {
+  const img = e.target as HTMLImageElement
+  img.style.visibility = 'hidden'
+}
 
 const sourceLabel = computed(() => {
+  if (link.value) return link.value.siteName
   if (metaSource.value === 'douban') return '豆瓣'
   if (metaSource.value === 'weread') return '微信读书'
   return ''
@@ -149,7 +196,7 @@ const sourceLabel = computed(() => {
       <div class="sheet__body">
         <p class="meta__author">{{ book.author }}</p>
 
-        <!-- 评分 -->
+        <!-- 评分与关联 -->
         <div class="field">
           <div class="field__head">
             <span class="field__label">评分</span>
@@ -170,21 +217,47 @@ const sourceLabel = computed(() => {
               </span>
             </button>
           </div>
+
           <div class="field__foot">
-            <button class="mini" type="button" :disabled="looking" @click="askRating">
-              <RefreshCw :size="13" :stroke-width="2" :class="{ 'is-spin': looking }" />
-              {{ looking ? '查询中' : '查评分' }}
+            <button class="mini" type="button" @click="openPicker">
+              <Link2 :size="14" :stroke-width="2" />
+              {{ link ? '重新关联' : '关联' }}
             </button>
-            <span v-if="sourceLabel && countLabel" class="field__note">
-              {{ sourceLabel }} · {{ countLabel }}
+            <span v-if="sourceLabel && countText(ratingCount)" class="field__note">
+              {{ sourceLabel }} · {{ countText(ratingCount) }}
             </span>
-            <button
-              v-if="rating != null"
-              class="mini mini--quiet"
-              type="button"
-              @click="setRating(null)"
-            >清除</button>
+            <button v-if="link" class="mini mini--quiet" type="button" @click="clearLink">
+              取消关联
+            </button>
           </div>
+
+          <!-- 关联到的那条记录：书名、作者、封面、类型、评分原样展示 -->
+          <div v-if="link" class="linked">
+            <span class="thumb thumb--lg">
+              <span class="thumb__ph" aria-hidden="true">{{ link.title.charAt(0) || '书' }}</span>
+              <img
+                v-if="link.coverUrl"
+                class="thumb__img"
+                :src="link.coverUrl"
+                :alt="link.title"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+                @error="hideCover"
+              />
+            </span>
+            <div class="linked__main">
+              <p class="linked__title">{{ link.title }}</p>
+              <p class="linked__meta">
+                {{ link.author || '作者未知' }}<template v-if="typeText"> · {{ typeText }}</template>
+              </p>
+              <p class="linked__score">
+                {{ link.rating.toFixed(1) }}
+                <span v-if="link.ratingCount">{{ countText(link.ratingCount) }}</span>
+                <span class="linked__site">{{ link.siteName }}</span>
+              </p>
+            </div>
+          </div>
+
           <p v-if="hint" class="field__hint">{{ hint }}</p>
         </div>
 
@@ -216,15 +289,15 @@ const sourceLabel = computed(() => {
               <Plus :size="16" :stroke-width="2" />
             </button>
           </div>
-          <div v-if="candidates.length" class="cands">
+          <div v-if="tagCandidates.length" class="cands">
             <span class="cands__label">从书名里找到：</span>
             <button
-              v-for="c in candidates"
-              :key="c"
+              v-for="t in tagCandidates"
+              :key="t"
               class="cand"
               type="button"
-              @click="addTag(c)"
-            >+ {{ c }}</button>
+              @click="addTag(t)"
+            >+ {{ t }}</button>
           </div>
         </div>
 
@@ -232,6 +305,66 @@ const sourceLabel = computed(() => {
           <Star :size="12" :stroke-width="2" />
           评分存 10 分制，点星星左半是 0.5 星。标签只存在本机，会随同步一起走。
         </p>
+      </div>
+    </div>
+
+    <!-- 关联面板：盖在编辑面板之上，选完即关 -->
+    <div v-if="pickerOpen" class="picker">
+      <div class="picker__scrim" @click="closePicker" />
+      <div class="picker__sheet">
+        <div class="sheet__handle" />
+        <div class="picker__head">
+          <span class="picker__title">选择关联的评分站</span>
+          <button class="close" type="button" aria-label="关闭" @click="closePicker">
+            <X :size="18" :stroke-width="1.8" />
+          </button>
+        </div>
+        <div class="picker__body">
+          <p v-if="picking" class="picker__state">正在查询豆瓣、微信读书…</p>
+          <p v-else-if="!candidates.length" class="picker__state">
+            {{ pickError || '各评分站都没收录这本' }}
+          </p>
+          <template v-else>
+            <button
+              v-for="c in candidates"
+              :key="`${c.site}-${c.bookId ?? c.title}`"
+              class="candrow"
+              :class="{ 'is-active': isLinked(c) }"
+              type="button"
+              @click="choose(c)"
+            >
+              <span class="thumb">
+                <span class="thumb__ph" aria-hidden="true">{{ c.title.charAt(0) || '书' }}</span>
+                <img
+                  v-if="c.coverUrl"
+                  class="thumb__img"
+                  :src="c.coverUrl"
+                  :alt="c.title"
+                  loading="lazy"
+                  referrerpolicy="no-referrer"
+                  @error="hideCover"
+                />
+              </span>
+              <span class="candrow__main">
+                <span class="candrow__top">
+                  <span class="candrow__site">{{ c.siteName }}</span>
+                  <span class="candrow__title">{{ c.title }}</span>
+                </span>
+                <span class="candrow__author">{{ c.author || '作者未知' }}</span>
+                <span class="candrow__foot">
+                  <span class="candrow__type">{{ typeText }}</span>
+                  <span class="candrow__score">{{ c.rating.toFixed(1) }}</span>
+                  <span class="candrow__count">{{ countText(c.ratingCount) }}</span>
+                  <span v-if="c.partial" class="candrow__warn">分卷</span>
+                </span>
+              </span>
+              <Check v-if="isLinked(c)" class="candrow__check" :size="18" :stroke-width="2.2" />
+            </button>
+            <p class="picker__note">
+              按评分人数从多到少排。人数越多样本越大，分数越接近大众判断；标「分卷」的只是其中一册。
+            </p>
+          </template>
+        </div>
       </div>
     </div>
   </div>
@@ -552,6 +685,276 @@ const sourceLabel = computed(() => {
   margin: 16px 0 0;
   font-size: 11.5px;
   line-height: 1.55;
+  color: var(--text-3);
+}
+/* ---------- 关联记录 ---------- */
+.linked {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+/* 封面兜底：占位字垫在下面，图片加载成功后盖上去；
+   豆瓣图要靠中继带 Referer 才给，App 没配中继时至少还能看到首字 */
+.thumb {
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 54px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.thumb--lg {
+  width: 44px;
+  height: 60px;
+}
+
+.thumb__ph {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-serif);
+  font-size: 17px;
+  color: var(--text-2);
+}
+
+.thumb__img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.linked__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.linked__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.linked__meta {
+  margin: 3px 0 0;
+  font-size: 11.5px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.linked__score {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.linked__score > span {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+.linked__site {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  color: var(--text-2);
+  background: var(--surface);
+}
+
+/* ---------- 关联面板 ---------- */
+.picker {
+  position: absolute;
+  inset: 0;
+  /* 编辑面板本身用的是全局 .sheet（fixed + z-index 60），
+     这里必须压过它，否则候选列表被挡在下面点不到 */
+  z-index: 80;
+  display: flex;
+  align-items: flex-end;
+}
+
+.picker__scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim);
+}
+
+.picker__sheet {
+  position: relative;
+  width: 100%;
+  max-height: 76vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding-bottom: var(--safe-bottom);
+  box-shadow: 0 -8px 32px -12px rgba(0, 0, 0, 0.3);
+}
+
+.picker__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 6px 16px;
+}
+
+.picker__title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.picker__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 12px 16px;
+}
+
+.picker__state {
+  padding: 24px 6px;
+  font-size: 13px;
+  text-align: center;
+  color: var(--text-2);
+}
+
+.candrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 8px;
+  text-align: left;
+  border-radius: var(--radius);
+  color: var(--text);
+}
+
+.candrow:active {
+  background: var(--surface-2);
+}
+
+.candrow.is-active {
+  background: var(--accent-soft);
+}
+
+.candrow__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.candrow__top {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.candrow__site {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10.5px;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.candrow.is-active .candrow__site {
+  background: var(--surface);
+}
+
+.candrow__title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candrow__author {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candrow__foot {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.candrow__type {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candrow__score {
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.candrow__count {
+  flex: none;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.candrow__warn {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--text-2);
+  border: 1px solid var(--line);
+}
+
+.candrow__check {
+  flex: none;
+  color: var(--accent);
+}
+
+.picker__note {
+  margin: 10px 4px 0;
+  font-size: 11px;
+  line-height: 1.5;
   color: var(--text-3);
 }
 </style>

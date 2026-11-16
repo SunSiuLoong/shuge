@@ -19,6 +19,20 @@ export const normTitle = (s: string): string =>
 const DERIVED = /同人|外传|续作|后传|前传|番外|山寨|改写|番外篇|第[一二三四五六七八九十\d]+部/
 
 /**
+ * 书名后面跟的这一段是不是「分卷/副标题」而不是另一本书。
+ *
+ * 「剑来1：少年起微末」「雪中悍刀行（全20册）」「三体全集」是同书的不同版本；
+ * 「活着为了讲述」「活着之上」是另一本书，不能因为都以「活着」开头就算同一本。
+ * 只看首字符就够：分卷都以数字、第、上/中/下、全、括号或冒号开头。
+ */
+export const isVolumeLike = (rest: string): boolean => {
+  const t = rest.trim()
+  if (!t) return true
+  if (t.length > 18) return false
+  return /^[0-9０-９一二三四五六七八九十百千]|^第|^[上中下]|^全|^[（(]|^[:：]/.test(t)
+}
+
+/**
  * 候选书与目标书的相似度，0 表示不是同一本。
  *
  * 分档而不是只判「包含」，因为三种情况后果完全不同：
@@ -38,7 +52,8 @@ export const scoreOf = (
   if (!a || !b) return 0
   let s = 0
   if (a === b) s = 100
-  else if (a.startsWith(b)) s = 85
+  // 前缀相同还要看「多出来的那一段」是什么：分卷给 85，另一本书只给 65（会被上层降权）
+  else if (a.startsWith(b)) s = isVolumeLike(a.slice(b.length)) ? 85 : 65
   else if (a.includes(b)) s = DERIVED.test(candTitle) ? 25 : 65
   else if (b.includes(a)) s = 50
   else return 0
