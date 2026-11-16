@@ -117,7 +117,9 @@ if (bad.trim()) {
   sh('git', ['commit', '-m', `v${version}: ${headline}`])
 }
 if (!tags) sh('git', ['tag', '-a', tag, '-m', `v${version}`])
-shRetry('git', ['push', pushUrl, 'HEAD:refs/heads/main', '--force-with-lease'])
+// 不用 --force-with-lease：本地 origin/main 常年不 fetch，「stale info」会被误判成冲突。
+// 发版是「在 main 上追加提交」的正常流程，普通推送失败反而是真有问题，不该强推。
+shRetry('git', ['push', pushUrl, 'HEAD:refs/heads/main'])
 shRetry('git', ['push', pushUrl, `refs/tags/${tag}`])
 
 const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases`, {
