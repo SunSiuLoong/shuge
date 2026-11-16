@@ -1,11 +1,12 @@
 import Dexie, { type Table } from 'dexie'
-import type { Book, Bookmark, Group, Progress } from '../types'
+import type { Book, Bookmark, Group, Progress, StoredFont } from '../types'
 
 export class ReaderDB extends Dexie {
   books!: Table<Book, number>
   progress!: Table<Progress, number>
   bookmarks!: Table<Bookmark, number>
   groups!: Table<Group, number>
+  fonts!: Table<StoredFont, string>
 
   constructor() {
     super('shuge-reader')
@@ -14,6 +15,14 @@ export class ReaderDB extends Dexie {
       progress: '++id, &bookId, updatedAt',
       bookmarks: '++id, bookId, [bookId+cfi], createdAt',
       groups: '++id, name, order',
+    })
+    // v2：用户导入的阅读字体（ttf/otf/woff），存二进制，随书库一起在本地
+    this.version(2).stores({
+      books: '++id, title, author, addedAt, lastOpenedAt, fingerprint, *tags, rating',
+      progress: '++id, &bookId, updatedAt',
+      bookmarks: '++id, bookId, [bookId+cfi], createdAt',
+      groups: '++id, name, order',
+      fonts: '&id, addedAt',
     })
   }
 }

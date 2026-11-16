@@ -21,6 +21,7 @@ import {
   SORT_LABELS,
 } from './store'
 import type { SortKey } from './store'
+import { settings } from '../settings'
 import { maybeAutoSync } from '../sync'
 import { backfillTags } from '../meta'
 import BookCard from './BookCard.vue'
@@ -164,7 +165,11 @@ onMounted(() => {
             <span class="group__name">{{ g.label }}</span>
             <span class="group__count">{{ g.count }} 本</span>
           </header>
-          <div class="grid">
+          <div
+            class="grid"
+            :class="{ 'is-list': settings.shelfLayout === 'list' }"
+            :style="{ '--cols': settings.shelfColumns }"
+          >
             <div
               v-for="book in g.books"
               :key="book.id"
@@ -175,7 +180,13 @@ onMounted(() => {
               @pointercancel="pressEnd"
               @contextmenu.prevent="actionBook = book"
             >
-              <BookCard :book="book" :percent="percentOf(book.id)" @open="openBook" />
+              <BookCard
+                :book="book"
+                :percent="percentOf(book.id)"
+                :layout="settings.shelfLayout"
+                :show-percent="settings.showPercent"
+                @open="openBook"
+              />
             </div>
           </div>
         </section>
@@ -244,6 +255,44 @@ onMounted(() => {
               @click="chooseSort(key as SortKey)"
             >{{ label }}</button>
           </div>
+
+          <p class="seg__label">显示方式</p>
+          <div class="chips">
+            <button
+              class="chip"
+              :class="{ 'is-active': settings.shelfLayout === 'grid' }"
+              type="button"
+              @click="settings.shelfLayout = 'grid'"
+            >网格封面</button>
+            <button
+              class="chip"
+              :class="{ 'is-active': settings.shelfLayout === 'list' }"
+              type="button"
+              @click="settings.shelfLayout = 'list'"
+            >列表</button>
+          </div>
+
+          <template v-if="settings.shelfLayout === 'grid'">
+            <p class="seg__label">每行本数</p>
+            <div class="chips">
+              <button
+                v-for="n in [2, 3, 4]"
+                :key="n"
+                class="chip"
+                :class="{ 'is-active': settings.shelfColumns === n }"
+                type="button"
+                @click="settings.shelfColumns = n"
+              >{{ n }} 本</button>
+            </div>
+          </template>
+
+          <button class="switchrow" type="button" @click="settings.showPercent = !settings.showPercent">
+            <span class="switchrow__text">
+              显示阅读进度
+              <span class="switchrow__note">在书名下显示全书百分比</span>
+            </span>
+            <span class="switch" :class="{ 'is-on': settings.showPercent }" />
+          </button>
 
           <p class="seg__label">
             按标签查看
@@ -345,20 +394,22 @@ onMounted(() => {
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 20px 16px;
+  /* 列数由用户设置（--cols），默认 2；四列时缩小列间距，否则封面被挤成细条 */
+  grid-template-columns: repeat(var(--cols, 2), 1fr);
+  gap: 18px clamp(8px, 2vw, 16px);
   padding: 14px 18px 0;
 }
 
-@media (min-width: 520px) {
-  .grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
+/* 列表模式：一行一本，不再吃网格 */
+.grid.is-list {
+  display: block;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 4px 18px 0;
 }
 
 @media (min-width: 760px) {
   .grid {
-    grid-template-columns: repeat(4, 1fr);
     max-width: 900px;
     margin: 0 auto;
   }
@@ -514,7 +565,7 @@ onMounted(() => {
   padding: 10px 20px;
   border-radius: 999px;
   font-size: 14px;
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
   box-shadow: 0 6px 18px -8px var(--accent);
 }
@@ -539,7 +590,7 @@ onMounted(() => {
   width: 50px;
   height: 50px;
   border-radius: 50%;
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
   box-shadow: 0 8px 24px -8px rgba(180, 71, 47, 0.72);
 }
@@ -619,7 +670,7 @@ onMounted(() => {
   backdrop-filter: blur(8px);
 }
 
-[data-theme='night'] .toast {
+[data-scheme='dark'] .toast {
   color: #16181a;
   background: rgba(230, 227, 220, 0.92);
 }
@@ -806,7 +857,7 @@ onMounted(() => {
   border-radius: var(--radius);
   font-size: 14.5px;
   font-weight: 600;
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
 }
 

@@ -4,11 +4,13 @@ export type Route =
   | { name: 'shelf' }
   | { name: 'reader'; id: number }
   | { name: 'settings' }
+  | { name: 'about' }
 
 const parse = (): Route => {
   const raw = location.hash.replace(/^#/, '') || '/'
   const read = raw.match(/^\/read\/(\d+)/)
   if (read) return { name: 'reader', id: Number(read[1]) }
+  if (raw.startsWith('/about')) return { name: 'about' }
   if (raw.startsWith('/settings')) return { name: 'settings' }
   return { name: 'shelf' }
 }

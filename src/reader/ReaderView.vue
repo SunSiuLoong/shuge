@@ -13,9 +13,10 @@ import { getBook, getProgress, saveProgress, addBookmark, listBookmarks, patchBo
 import type { Book, Bookmark as BookmarkRow, TocItem } from '../types'
 import { getBookFile } from '../storage/opfs'
 import { navigate } from '../router'
-import { settings, applyTheme, resolveTheme, systemDark } from '../settings'
+import { settings, readerTheme } from '../settings'
 import { FoliateAdapter, type RelocateInfo } from './adapter'
-import { buildReaderCSS, READER_PALETTES } from './theme'
+import { buildReaderCSS, READER_PALETTES, readerVars, type CustomFontRef } from './theme'
+import { fontRefOf } from './fonts'
 import TocDrawer from './TocDrawer.vue'
 import SettingsSheet from './SettingsSheet.vue'
 import SearchSheet from './SearchSheet.vue'
@@ -44,7 +45,9 @@ const bookmarks = ref<BookmarkRow[]>([])
 const dragging = ref(false)
 const slideValue = ref(0)
 
-const palette = computed(() => READER_PALETTES[resolveTheme(settings.theme)])
+const palette = computed(() => READER_PALETTES[readerTheme.value])
+/** 自定义字体的 family + blob 地址；切字体时重新解析，没导入过就是 null */
+const customFont = ref<CustomFontRef | null>(null)
 const percentText = computed(() => `${(fraction.value * 100).toFixed(1)}%`)
 const isBookmarked = computed(() =>
   bookmarks.value.some((b) => b.chapterIndex === chapterIndex.value),
@@ -101,7 +104,14 @@ const applySettings = (): void => {
   a.setFlow(settings.flow)
   a.setMargin(settings.margin)
   a.setGap(4)
-  a.setStyles(buildReaderCSS(settings))
+  a.setStyles(buildReaderCSS(settings, customFont.value))
+}
+
+/** 切到自定义字体时先把 font-face 与 blob 地址准备好，再重建 iframe 样式 */
+const syncFont = async (): Promise<void> => {
+  const key = settings.fontFamily
+  customFont.value = key.startsWith('custom:') ? await fontRefOf(key) : null
+  applySettings()
 }
 
 /** 屏幕旋转 / 地址栏收放都会改尺寸，需要重算分页宽度 */
@@ -321,17 +331,16 @@ watch(
   { deep: true },
 )
 
+/** 换字体要先解析出 blob 地址，再重建 iframe 样式（否则 css 里是空 url） */
 watch(
-  () => settings.theme,
+  () => settings.fontFamily,
   () => {
-    applyTheme(settings.theme)
+    void syncFont()
   },
 )
 
-/** 系统暗色切换时 settings.theme 仍是 'auto'，上面的 watch 不会触发，
- *  这里单独监听系统态，重建 iframe 内的配色与文字样式。 */
-watch(systemDark, () => {
-  applyTheme(settings.theme)
+/** 阅读主题设为「跟随 App」时，App 明暗一变解析配色就变，正文要跟着重刷 */
+watch(readerTheme, () => {
   applySettings()
 })
 
@@ -388,7 +397,7 @@ onMounted(async () => {
     await a.open(file, lastLocation)
     toc.value = a.getToc()
     bookmarks.value = await listBookmarks(props.bookId)
-    applySettings()
+    await syncFont()
     bindContents()
     loading.value = false
     await patchBook(props.bookId, { lastOpenedAt: Date.now() })
@@ -414,7 +423,7 @@ onBeforeUnmount(() => {
   <div
     class="reader"
     :class="{ 'is-scrolled': settings.flow === 'scrolled' }"
-    :style="{ background: palette.bg, color: palette.text }"
+    :style="{ ...readerVars(palette), background: palette.bg, color: palette.text }"
   >
     <div ref="host" class="reader__host" @click="onTap" />
 
@@ -560,7 +569,7 @@ onBeforeUnmount(() => {
   padding: 8px 18px;
   border-radius: 999px;
   font-size: 13px;
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
 }
 

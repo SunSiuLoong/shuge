@@ -41,3 +41,7 @@ _samples/
 
 # 截图临时产物
 docs/screenshots/*-raw.png
+
+# 项目记忆与本地工作区数据，不进仓库
+Agent.md
+.workbuddy/

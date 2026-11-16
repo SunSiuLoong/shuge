@@ -3,10 +3,17 @@ import { computed } from 'vue'
 import type { Book } from '../types'
 import { coverUrlOf } from './useCoverUrl'
 
-const props = defineProps<{
-  book: Book
-  percent: number
-}>()
+const props = withDefaults(
+  defineProps<{
+    book: Book
+    percent: number
+    /** grid = 封面卡片；list = 一行一本 */
+    layout?: 'grid' | 'list'
+    /** 是否在作者行右侧显示全书百分比 */
+    showPercent?: boolean
+  }>(),
+  { layout: 'grid', showPercent: false },
+)
 
 const emit = defineEmits<{ (e: 'open', book: Book): void }>()
 
@@ -33,7 +40,7 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
 </script>
 
 <template>
-  <button class="card" type="button" @click="emit('open', book)">
+  <button class="card" :class="`card--${layout}`" type="button" @click="emit('open', book)">
     <div class="card__cover">
       <img v-if="cover" :src="cover" :alt="book.title" loading="lazy" decoding="async" />
       <span v-else class="card__ph" :style="placeholderTone">{{ initial }}</span>
@@ -44,24 +51,27 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
       >{{ rating }}</span>
       <span v-if="finished" class="card__done">已读完</span>
     </div>
-    <div class="card__meta">
+
+    <div class="card__body">
       <p class="card__title">{{ book.title }}</p>
-      <p class="card__author">{{ book.author }}</p>
+      <p class="card__author-row">
+        <span class="card__author">{{ book.author }}</span>
+        <span v-if="showPercent && pct > 0" class="card__pct">{{ pct }}%</span>
+      </p>
       <!-- 固定高度占位：标签有无都不能让同一排的进度条错位 -->
       <p class="card__tags" :class="{ 'is-empty': !visibleTags.length }">
         <span v-for="t in visibleTags" :key="t" class="card__tag">{{ t }}</span>
         <span v-if="moreTags" class="card__tag card__tag--more">+{{ moreTags }}</span>
       </p>
-    </div>
-    <div class="card__progress" :class="{ 'is-empty': pct === 0 }">
-      <i :style="{ width: `${pct}%` }" />
+      <div class="card__progress" :class="{ 'is-empty': pct === 0 }">
+        <i :style="{ width: `${pct}%` }" />
+      </div>
     </div>
   </button>
 </template>
 
 <style scoped>
 .card {
-  display: block;
   width: 100%;
   padding: 0;
   text-align: left;
@@ -73,6 +83,55 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
   transform: scale(0.985);
 }
 
+.card--grid {
+  display: block;
+}
+
+/* ---- 列表模式 ---- */
+.card--list {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.card--list:last-child {
+  border-bottom: 0;
+}
+
+.card--list:active {
+  opacity: 0.66;
+}
+
+.card--list .card__cover {
+  flex: none;
+  width: 52px;
+  aspect-ratio: 3 / 4;
+  border-radius: var(--radius-sm);
+}
+
+.card--list .card__body {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+}
+
+.card--list .card__title {
+  height: auto;
+  font-size: 14.5px;
+  -webkit-line-clamp: 1;
+}
+
+.card--list .card__author-row {
+  margin-top: 4px;
+}
+
+.card--list .card__tags {
+  display: none;
+}
+
+/* ---- 封面 ---- */
 .card__cover {
   position: relative;
   aspect-ratio: 3 / 4;
@@ -103,6 +162,10 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
   font-weight: 600;
 }
 
+.card--list .card__ph {
+  font-size: 20px;
+}
+
 .card__done {
   position: absolute;
   right: 6px;
@@ -114,6 +177,13 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
   color: #fff;
   /* 不透明：半透明底在后层是浅色封面时对比度不可控，审计也会判成 1.1:1 */
   background: #3d3832;
+}
+
+.card--list .card__done {
+  right: 3px;
+  bottom: 3px;
+  padding: 0 3px;
+  font-size: 8.5px;
 }
 
 /* 评分压在封面左上角：白字压在书封上，任何底色都能看清 */
@@ -133,7 +203,16 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
   background: #3d3832;
 }
 
-.card__meta {
+.card--list .card__rating {
+  left: 3px;
+  top: 3px;
+  min-width: 18px;
+  padding: 0 3px;
+  font-size: 9px;
+}
+
+/* ---- 文字区 ---- */
+.card__body {
   padding: 8px 2px 0;
 }
 
@@ -151,13 +230,28 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
   overflow: hidden;
 }
 
-.card__author {
+.card__author-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
   margin: 3px 0 0;
+}
+
+.card__author {
+  min-width: 0;
   font-size: 11.5px;
   color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.card__pct {
+  flex: none;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
 }
 
 /* 标签行固定 16px 高：没有标签时用 visibility 留位，保证同一排进度条齐平 */
@@ -194,7 +288,7 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
 }
 
 /* 夜读下 --text-2 压 surface-2 只有 4.14:1，10px 小字不够，提亮到正文色 */
-[data-theme='night'] .card__tag {
+[data-scheme='dark'] .card__tag {
   color: var(--text);
 }
 

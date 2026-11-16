@@ -109,3 +109,16 @@ export interface Group {
   color?: string
   order: number
 }
+
+/** 用户导入的阅读字体。二进制直接进 IndexedDB，不联网、不上传 */
+export interface StoredFont {
+  id: string
+  /** 界面显示名（默认取文件名去扩展名） */
+  name: string
+  /** @font-face 用的家族名，全局唯一 */
+  family: string
+  /** 字节数，用于列表展示 */
+  size: number
+  addedAt: number
+  data: ArrayBuffer
+}

@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { db, patchBook } from '../db'
 import type { Book } from '../types'
+import { settings } from '../settings'
 import { lastSourceError, pickBest, searchSources } from './sources'
 import { tagsFromName } from './tags'
 import type { SourceCandidate } from './types'
@@ -22,13 +23,14 @@ export { searchSources, lastSourceError, pickBest }
 /** 查不到时给界面看的提示 */
 export const lastRatingError = ref<string | null>(null)
 
-/** 查一条最佳候选（评分人数最多）。查不到返回 null，不猜。 */
+/** 查一条最佳候选。查不到返回 null，不猜。 */
 export const lookupRating = async (
   title: string,
   author?: string,
 ): Promise<SourceCandidate | null> => {
   const list = await searchSources(title, author)
-  const best = pickBest(list)
+  // 用户在设置里指定的优先站排在最前；auto 时还是按评分人数
+  const best = pickBest(list, settings.ratingSource)
   lastRatingError.value = best ? null : lastSourceError.value || '各评分站都没收录这本'
   return best
 }

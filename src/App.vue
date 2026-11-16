@@ -4,9 +4,14 @@ import { route } from './router'
 import ShelfView from './shelf/ShelfView.vue'
 import ReaderView from './reader/ReaderView.vue'
 import SettingsView from './settings/SettingsView.vue'
+import AboutView from './settings/AboutView.vue'
 import { requestPersist, listBookFiles, deleteBookFile } from './storage/opfs'
 import { db, patchBook } from './db'
 import { applyUpdate, initPWA, needRefresh, offlineReady } from './pwa'
+import { initUiStyle } from './ui/style'
+
+// UI 风格（莫奈取色 / 液态玻璃）的副作用挂在这里，只在 App 挂载一次
+initUiStyle()
 
 /** 启动对账：删掉没有记录指向的孤儿文件，标记文件丢失的书 */
 const reconcile = async (): Promise<void> => {
@@ -39,6 +44,7 @@ onMounted(() => {
   <ShelfView v-if="route.name === 'shelf'" />
   <ReaderView v-else-if="route.name === 'reader'" :key="route.id" :book-id="route.id" />
   <SettingsView v-else-if="route.name === 'settings'" />
+  <AboutView v-else-if="route.name === 'about'" />
 
   <Transition name="fade">
     <button v-if="needRefresh" class="sw-toast" type="button" @click="applyUpdate">
@@ -61,7 +67,7 @@ onMounted(() => {
   padding: 10px 18px;
   border-radius: 999px;
   font-size: 13px;
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
   box-shadow: 0 8px 24px -10px rgba(0, 0, 0, 0.5);
 }
@@ -71,7 +77,7 @@ onMounted(() => {
   background: rgba(35, 33, 30, 0.9);
 }
 
-[data-theme='night'] .sw-toast--plain {
+[data-scheme='dark'] .sw-toast--plain {
   color: #16181a;
   background: rgba(230, 227, 220, 0.92);
 }

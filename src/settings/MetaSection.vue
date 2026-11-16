@@ -5,6 +5,7 @@ import { books } from '../shelf/store'
 import { enrichMany } from '../meta'
 import { autoLinkEnabled, autoLinkState, setAutoLink } from '../meta/autolink'
 import { dav } from '../sync/webdav'
+import { RATING_SOURCE_LABELS, settings, type RatingSource } from '../settings'
 
 /**
  * 元数据区块：标签与评分从哪来、怎么批量补。
@@ -97,6 +98,12 @@ const run = async (): Promise<void> => {
 const stop = (): void => {
   cancelled = true
 }
+
+const sources = Object.keys(RATING_SOURCE_LABELS) as RatingSource[]
+
+const chooseSource = (key: RatingSource): void => {
+  settings.ratingSource = key
+}
 </script>
 
 <template>
@@ -147,6 +154,25 @@ const stop = (): void => {
     <p class="hint hint--tight">
       导入完成后在后台逐本查询，自动挑「评分人数最多」的那一条（豆瓣或微信读书），
       每本间隔半秒以免被限流。长按书籍可以重新关联。关掉后只在手动点「关联」时联网。
+    </p>
+
+    <p class="seg__label">自动关联优先用哪家</p>
+    <div class="chips">
+      <button
+        v-for="key in sources"
+        :key="key"
+        type="button"
+        class="chip"
+        :class="{ 'is-active': settings.ratingSource === key }"
+        @click="chooseSource(key)"
+      >
+        {{ RATING_SOURCE_LABELS[key] }}
+      </button>
+    </div>
+    <p class="hint hint--tight">
+      默认「评分人数最多」：人数代表样本量，豆瓣与微信读书谁人多用谁。
+      两站的分数量纲不同（豆瓣 10 分制、微信读书折算后也按 10 分显示），
+      如果只想统一到某一站，可以在这里锁定。
     </p>
 
     <label class="line line--switch">
@@ -235,7 +261,7 @@ const stop = (): void => {
 .btn--primary {
   border-color: transparent;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 600;
 }
 
@@ -251,10 +277,42 @@ const stop = (): void => {
   color: var(--text-2);
 }
 
+.seg__label {
+  margin: 14px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+
+.chip {
+  min-height: 40px;
+  padding: 0 13px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  transition: background 140ms var(--ease), color 140ms var(--ease);
+}
+
+.chip.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
 .progress {
   padding: 0 0 10px;
 }
-
 .progress__bar {
   height: 2px;
   border-radius: 1px;

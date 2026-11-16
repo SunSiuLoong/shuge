@@ -1,17 +1,30 @@
 <script setup lang="ts">
-import { Minus, Plus } from 'lucide-vue-next'
+import { onMounted, ref } from 'vue'
+import { Minus, Plus, X } from 'lucide-vue-next'
 import { settings, THEME_LABELS, type ThemeKey } from '../settings'
 import { READER_PALETTES } from './theme'
+import {
+  customFonts,
+  fontCssOf,
+  formatFontSize,
+  importFont,
+  listFonts,
+  removeFont,
+  type FontMeta,
+} from './fonts'
 
 const themes = Object.keys(THEME_LABELS) as ThemeKey[]
 const lineSteps = [1.5, 1.65, 1.75, 1.9, 2.05]
 const margins = [12, 20, 28, 36]
 
-/** auto 档没有单一色板，用纸白/夜读对半拼色 */
+const fontInput = ref<HTMLInputElement | null>(null)
+const fontMsg = ref('')
+const fontBusy = ref(false)
+
 /** 色块只负责展示配色，名字放到下方标签里 —— 文字压在半明半暗的色块上
  *  总要靠描边硬撑，五个色块风格也不统一。 */
 const swatchStyle = (key: ThemeKey): Record<string, string> => {
-  if (key === 'auto') {
+  if (key === 'follow') {
     return { background: 'linear-gradient(180deg, #fbf9f4 0 50%, #16181a 50%)' }
   }
   return { background: READER_PALETTES[key].bg }
@@ -30,6 +43,41 @@ const cycleMargin = (): void => {
   const next = margins[(i + 1) % margins.length]
   settings.margin = next ?? margins[0]
 }
+
+const pickFont = (): void => fontInput.value?.click()
+
+const onFontPicked = async (e: Event): Promise<void> => {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  fontBusy.value = true
+  fontMsg.value = '正在读取字体…'
+  try {
+    const meta = await importFont(file)
+    settings.fontFamily = `custom:${meta.id}`
+    fontMsg.value = `已导入「${meta.name}」（${formatFontSize(meta.size)}）`
+  } catch (err) {
+    fontMsg.value =
+      err instanceof Error && err.message
+        ? `这个文件不能当字体用：${err.message}`
+        : '这个文件不能当字体用'
+  } finally {
+    fontBusy.value = false
+    window.setTimeout(() => (fontMsg.value = ''), 6000)
+  }
+}
+
+const dropFont = async (f: FontMeta): Promise<void> => {
+  if (settings.fontFamily === `custom:${f.id}`) settings.fontFamily = 'serif'
+  await removeFont(f.id)
+  fontMsg.value = `已删除「${f.name}」`
+  window.setTimeout(() => (fontMsg.value = ''), 3000)
+}
+
+onMounted(() => {
+  void listFonts()
+})
 </script>
 
 <template>
@@ -94,9 +142,9 @@ const cycleMargin = (): void => {
         </div>
       </div>
 
-      <div class="row">
+      <div class="row row--top">
         <span class="row__label">字体</span>
-        <div class="row__value">
+        <div class="row__value fonts">
           <button
             class="chip"
             :class="{ 'is-active': settings.fontFamily === 'serif' }"
@@ -113,8 +161,48 @@ const cycleMargin = (): void => {
           >
             黑体
           </button>
+          <span
+            v-for="f in customFonts"
+            :key="f.id"
+            class="fontchip"
+            :class="{ 'is-active': settings.fontFamily === `custom:${f.id}` }"
+          >
+            <button
+              class="fontchip__pick"
+              type="button"
+              :style="{ fontFamily: fontCssOf(f) }"
+              :title="`${f.name} · ${formatFontSize(f.size)}`"
+              @click="settings.fontFamily = `custom:${f.id}`"
+            >
+              {{ f.name }}
+            </button>
+            <button
+              class="fontchip__del"
+              type="button"
+              :aria-label="`删除字体 ${f.name}`"
+              @click="dropFont(f)"
+            >
+              <X :size="12" :stroke-width="2.4" />
+            </button>
+          </span>
+          <button class="chip chip--ghost" type="button" :disabled="fontBusy" @click="pickFont">
+            <Plus :size="13" :stroke-width="2.2" />
+            导入字体
+          </button>
         </div>
       </div>
+      <p v-if="fontMsg" class="fontmsg">{{ fontMsg }}</p>
+      <p v-else class="fontmsg fontmsg--hint">
+        支持 ttf / otf / woff / woff2，字体存在本机，随书库一起，不上传。
+      </p>
+
+      <input
+        ref="fontInput"
+        class="hidden"
+        type="file"
+        accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+        @change="onFontPicked"
+      />
 
       <div class="divider" />
 
@@ -255,8 +343,96 @@ const cycleMargin = (): void => {
 }
 
 .chip.is-active {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
+}
+
+.chip--ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent);
+  background: transparent;
+  outline: 1px dashed var(--line);
+  outline-offset: -1px;
+}
+
+.chip--ghost:disabled {
+  opacity: 0.5;
+}
+
+/* 字体行：chip 会换行折成两排，标签要和第一排对齐 */
+.row--top {
+  align-items: flex-start;
+}
+
+.row--top .row__label {
+  padding-top: 11px;
+}
+
+.fonts {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.fontchip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  border-radius: 999px;
+  background: var(--surface-2);
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  overflow: hidden;
+}
+
+.fontchip.is-active {
+  background: var(--accent);
+  outline-color: var(--accent);
+}
+
+.fontchip__pick {
+  min-height: 40px;
+  max-width: 132px;
+  padding: 9px 4px 9px 12px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fontchip.is-active .fontchip__pick {
+  color: var(--on-accent);
+}
+
+.fontchip__del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 删除键也要满足 40px 触摸区，26 宽在手机上很容易点到旁边的字体 */
+  width: 40px;
+  height: 40px;
+  color: var(--text-3);
+}
+
+.fontchip.is-active .fontchip__del {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.fontmsg {
+  margin: 2px 0 8px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.fontmsg--hint {
+  color: var(--text-3);
+}
+
+.hidden {
+  display: none;
 }
 
 .switch {

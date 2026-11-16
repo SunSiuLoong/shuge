@@ -496,7 +496,7 @@ const sourceLabel = computed(() => {
   color: rgba(0, 0, 0, 0.16);
 }
 
-[data-theme='night'] .star {
+[data-scheme='dark'] .star {
   color: rgba(255, 255, 255, 0.2);
 }
 
@@ -646,7 +646,7 @@ const sourceLabel = computed(() => {
   width: 40px;
   height: 40px;
   border-radius: var(--radius);
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
 }
 

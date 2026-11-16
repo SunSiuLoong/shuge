@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { dav } from '../sync/webdav'
+import type { RatingSource } from '../settings'
 import { listDoubanNative } from './douban'
 import { normTitle } from './match'
 import type { SourceCandidate } from './types'
@@ -52,7 +53,7 @@ const finalize = (list: SourceCandidate[]): SourceCandidate[] => {
 }
 
 /** 评分人数最多的那条；人数一样时取匹配度高的 */
-export const pickBest = (list: SourceCandidate[]): SourceCandidate | null => {
+const bestOf = (list: SourceCandidate[]): SourceCandidate | null => {
   let best: SourceCandidate | null = null
   for (const c of list) {
     if (!best) {
@@ -64,6 +65,22 @@ export const pickBest = (list: SourceCandidate[]): SourceCandidate | null => {
     if (a > b || (a === b && c.score > best.score)) best = c
   }
   return best
+}
+
+/**
+ * 挑自动关联的那条。
+ * 默认按「评分人数最多」；用户在设置里指定了优先站时，只要该站有候选就用该站的，
+ * 没有才回退到全局规则——固定站点可能压根没收录这本书，回退比留空有用。
+ */
+export const pickBest = (
+  list: SourceCandidate[],
+  prefer: RatingSource = 'auto',
+): SourceCandidate | null => {
+  if (prefer !== 'auto') {
+    const same = list.filter((c) => c.site === prefer)
+    if (same.length) return bestOf(same)
+  }
+  return bestOf(list)
 }
 
 const fromRelay = async (title: string, author?: string): Promise<SourceCandidate[]> => {

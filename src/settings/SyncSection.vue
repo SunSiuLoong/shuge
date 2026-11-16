@@ -8,6 +8,18 @@ const busy = ref(false)
 const msg = ref('')
 const failed = ref(false)
 
+/** 常见 WebDAV 服务的地址模板，点一下就填好；域名部分用户自己换 */
+const presets = [
+  { name: '坚果云', url: 'https://dav.jianguoyun.com/dav/' },
+  { name: 'Nextcloud', url: 'https://example.com/remote.php/dav/files/用户名/' },
+  { name: '群晖 / 自建', url: 'https://example.com:5006/' },
+]
+
+const usePreset = (url: string): void => {
+  dav.url = url
+  if (url.includes('jianguoyun')) msg.value = '坚果云请在「账号」填邮箱，「应用密码」用网页端生成的第三方密码'
+}
+
 const ready = computed(() => davConfigured())
 
 const run = async (fn: () => Promise<string>): Promise<void> => {
@@ -43,6 +55,19 @@ const onSync = (): Promise<void> =>
 <template>
   <section class="group">
     <p class="group__title">同步（WebDAV）</p>
+
+    <div class="presets">
+      <button
+        v-for="p in presets"
+        :key="p.name"
+        type="button"
+        class="preset"
+        :class="{ 'is-active': dav.url === p.url }"
+        @click="usePreset(p.url)"
+      >
+        {{ p.name }}
+      </button>
+    </div>
 
     <label class="field">
       <span class="field__label">服务地址</span>
@@ -162,6 +187,31 @@ const onSync = (): Promise<void> =>
   min-height: 44px;
 }
 
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 0 8px;
+}
+
+.preset {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+}
+
+.preset.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  outline-color: var(--accent);
+  font-weight: 600;
+}
+
 .field__label {
   flex: none;
   width: 72px;
@@ -216,7 +266,7 @@ const onSync = (): Promise<void> =>
 .btn--primary {
   border-color: transparent;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 600;
 }
 
