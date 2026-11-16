@@ -7,6 +7,7 @@ import { READER_PALETTES } from '../reader/theme'
 import { formatBytes, getStorageInfo, requestPersist, type StorageInfo } from '../storage/opfs'
 import { APP_VERSION } from '../version'
 import SyncSection from './SyncSection.vue'
+import MetaSection from './MetaSection.vue'
 
 const info = ref<StorageInfo | null>(null)
 const themes = Object.keys(THEME_LABELS) as ThemeKey[]
@@ -95,6 +96,8 @@ onMounted(refresh)
       </section>
 
       <SyncSection />
+
+      <MetaSection />
 
       <section class="group">
         <p class="group__title">其他</p>

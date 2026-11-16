@@ -1,22 +1,30 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ArrowUpDown, ExternalLink, Plus, Settings, Trash2, X } from 'lucide-vue-next'
+import { ArrowUpDown, ExternalLink, Plus, Settings, Tag, Trash2, X } from 'lucide-vue-next'
 import type { Book } from '../types'
 import { navigate } from '../router'
 import { importFiles, importState, removeBook } from '../importer/importer'
 import { formatBytes } from '../storage/opfs'
 import {
+  allTags,
   books,
+  groupMode,
+  groupedBooks,
   loading,
   percentOf,
+  setGroupMode,
   setSort,
+  setTagFilter,
   sortKey,
-  sortedBooks,
   startShelf,
+  tagFilter,
   SORT_LABELS,
 } from './store'
+import type { SortKey } from './store'
 import { maybeAutoSync } from '../sync'
+import { backfillTags } from '../meta'
 import BookCard from './BookCard.vue'
+import BookMetaSheet from './BookMetaSheet.vue'
 import LinkSheet from '../links/LinkSheet.vue'
 
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -25,6 +33,8 @@ const showSort = ref(false)
 const actionBook = ref<Book | null>(null)
 // 「去网文站」选中的书：先关掉操作弹层，再开站点选择
 const linkTarget = ref<{ title: string; author?: string } | null>(null)
+// 「标签与评分」编辑面板
+const metaBook = ref<Book | null>(null)
 const summary = ref<string | null>(null)
 
 const isEmpty = computed(() => !loading.value && books.value.length === 0)
@@ -91,14 +101,24 @@ const openLinkSheet = (): void => {
   linkTarget.value = { title: book.title, author: book.author }
 }
 
-const setSortAndClose = (key: typeof sortKey.value): void => {
-  setSort(key)
-  showSort.value = false
+const openMetaSheet = (): void => {
+  const book = actionBook.value
+  actionBook.value = null
+  if (!book) return
+  metaBook.value = book
 }
+
+const chooseSort = (key: SortKey): void => setSort(key)
+
+const chooseTag = (tag: string | null): void => setTagFilter(tag)
+
+const toggleGroup = (): void => setGroupMode(groupMode.value === 'tag' ? 'none' : 'tag')
 
 onMounted(() => {
   void startShelf()
   void maybeAutoSync()
+  // 老版本导入的书没有标签，用当时未清洗的书名回填一次
+  void backfillTags()
 })
 </script>
 
@@ -129,20 +149,36 @@ onMounted(() => {
       </div>
 
       <template v-else>
-        <div class="grid">
-          <div
-            v-for="book in sortedBooks"
-            :key="book.id"
-            class="grid__item"
-            @pointerdown="pressStart(book)"
-            @pointerup="pressEnd"
-            @pointerleave="pressEnd"
-            @pointercancel="pressEnd"
-            @contextmenu.prevent="actionBook = book"
-          >
-            <BookCard :book="book" :percent="percentOf(book.id)" @open="openBook" />
-          </div>
+        <!-- 选中标签后的筛选条：不占滚动区，随时能撤 -->
+        <div v-if="tagFilter" class="filterbar">
+          <Tag :size="13" :stroke-width="2" />
+          <span class="filterbar__name">{{ tagFilter }}</span>
+          <button class="filterbar__x" type="button" @click="chooseTag(null)">
+            <X :size="13" :stroke-width="2.2" />
+            全部
+          </button>
         </div>
+
+        <section v-for="g in groupedBooks" :key="g.key" class="group">
+          <header v-if="g.label" class="group__head">
+            <span class="group__name">{{ g.label }}</span>
+            <span class="group__count">{{ g.count }} 本</span>
+          </header>
+          <div class="grid">
+            <div
+              v-for="book in g.books"
+              :key="book.id"
+              class="grid__item"
+              @pointerdown="pressStart(book)"
+              @pointerup="pressEnd"
+              @pointerleave="pressEnd"
+              @pointercancel="pressEnd"
+              @contextmenu.prevent="actionBook = book"
+            >
+              <BookCard :book="book" :percent="percentOf(book.id)" @open="openBook" />
+            </div>
+          </div>
+        </section>
 
         <footer class="shelf__foot" :class="{ 'is-faded': summary }">
           <span>{{ books.length }} 本 · {{ totalLabel }}</span>
@@ -183,25 +219,63 @@ onMounted(() => {
       <div v-if="summary" class="toast">{{ summary }}</div>
     </Transition>
 
-    <!-- 排序 -->
+    <!-- 排序与筛选 -->
     <Transition name="fade">
       <div v-if="showSort" class="scrim" @click="showSort = false" />
     </Transition>
     <Transition name="slide-down">
-      <div v-if="showSort" class="sheet">
+      <div v-if="showSort" class="sheet sheet--panel">
         <div class="sheet__handle" />
-        <div class="sheet__head">排序方式</div>
-        <div class="sheet__body">
-          <button
-            v-for="(label, key) in SORT_LABELS"
-            :key="key"
-            class="option"
-            :class="{ 'is-active': sortKey === key }"
-            type="button"
-            @click="setSortAndClose(key as typeof sortKey)"
-          >
-            {{ label }}
+        <div class="sheet__head">
+          <span class="panel__head">排序与筛选</span>
+          <button class="icon-btn" type="button" aria-label="关闭" @click="showSort = false">
+            <X :size="18" :stroke-width="1.8" />
           </button>
+        </div>
+        <div class="sheet__body">
+          <p class="seg__label">排序方式</p>
+          <div class="chips">
+            <button
+              v-for="(label, key) in SORT_LABELS"
+              :key="key"
+              class="chip"
+              :class="{ 'is-active': sortKey === key }"
+              type="button"
+              @click="chooseSort(key as SortKey)"
+            >{{ label }}</button>
+          </div>
+
+          <p class="seg__label">
+            按标签查看
+            <span v-if="!allTags.length" class="seg__note">导入后自动从书名提取</span>
+          </p>
+          <div v-if="allTags.length" class="chips chips--scroll">
+            <button
+              class="chip"
+              :class="{ 'is-active': !tagFilter }"
+              type="button"
+              @click="chooseTag(null)"
+            >全部 {{ books.length }}</button>
+            <button
+              v-for="t in allTags"
+              :key="t.name"
+              class="chip"
+              :class="{ 'is-active': tagFilter === t.name }"
+              type="button"
+              @click="chooseTag(t.name)"
+            >{{ t.name }} {{ t.count }}</button>
+          </div>
+
+          <p class="seg__label">浏览方式</p>
+          <button class="switchrow" type="button" @click="toggleGroup">
+            <span class="switchrow__text">
+              按标签分组
+              <span class="switchrow__note">把同一题材的书排在一起</span>
+            </span>
+            <span class="switch" :class="{ 'is-on': groupMode === 'tag' }" />
+          </button>
+
+          <button class="done" type="button" @click="showSort = false">完成</button>
         </div>
       </div>
     </Transition>
@@ -220,6 +294,10 @@ onMounted(() => {
           </button>
         </div>
         <div class="sheet__body">
+          <button class="option" type="button" @click="openMetaSheet">
+            <Tag :size="17" :stroke-width="1.8" />
+            标签与评分
+          </button>
           <button class="option" type="button" @click="openLinkSheet">
             <ExternalLink :size="17" :stroke-width="1.8" />
             去网文站看书评
@@ -241,6 +319,11 @@ onMounted(() => {
         :author="linkTarget.author"
         @close="linkTarget = null"
       />
+    </Transition>
+
+    <!-- 标签与评分 -->
+    <Transition name="slide-down">
+      <BookMetaSheet v-if="metaBook" :book="metaBook" @close="metaBook = null" />
     </Transition>
   </div>
 </template>
@@ -285,6 +368,78 @@ onMounted(() => {
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
+}
+
+/* 选中标签后的筛选条，和顶栏同宽，滚动时不跟着走 */
+.filterbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 18px 2px;
+  padding: 0 6px 0 10px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.filterbar__name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filterbar__x {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 40px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.filterbar__x:active {
+  background: var(--line);
+}
+
+.group {
+  margin-bottom: 4px;
+}
+
+.group__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 20px 18px 0;
+}
+
+.group:first-of-type .group__head {
+  padding-top: 12px;
+}
+
+.group__name {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.group__count {
+  font-size: 11.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 有组标题时组内网格收紧上边距，免得标题和封面之间空一大块 */
+.group__head + .grid {
+  padding-top: 12px;
 }
 
 .shelf__foot {
@@ -513,5 +668,149 @@ onMounted(() => {
   margin: 10px 0 0;
   font-size: 11.5px;
   color: var(--text-3);
+}
+
+/* ---- 排序与筛选面板 ---- */
+.panel__head {
+  flex: 1;
+  min-width: 0;
+}
+
+.sheet--panel .sheet__body {
+  max-height: 64vh;
+}
+
+.seg__label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 20px 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+}
+
+.seg__label:first-child {
+  margin-top: 2px;
+}
+
+.seg__note {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 标签可能几十个，横向滚动比换十几行省地方 */
+.chips--scroll {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  margin: 0 -16px;
+  padding: 0 16px 6px;
+  scrollbar-width: none;
+}
+
+.chips--scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  flex: none;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  transition: background 140ms var(--ease), color 140ms var(--ease);
+}
+
+.chip:active {
+  transform: scale(0.97);
+}
+
+.chip.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.switchrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 8px 0;
+  text-align: left;
+}
+
+.switchrow__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.switchrow__note {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.switch {
+  position: relative;
+  flex: none;
+  width: 42px;
+  height: 25px;
+  border-radius: 999px;
+  background: var(--line);
+  transition: background 160ms var(--ease);
+}
+
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  transition: transform 160ms var(--ease);
+}
+
+.switch.is-on {
+  background: var(--accent);
+}
+
+.switch.is-on::after {
+  transform: translateX(17px);
+}
+
+.done {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 20px;
+  border-radius: var(--radius);
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+}
+
+.done:active {
+  transform: translateY(1px);
 }
 </style>

@@ -38,9 +38,16 @@ export interface Book {
   lastOpenedAt?: number
   /** 文件丢失标记（启动对账时置位） */
   missing?: boolean
-  // ---- 预留，首版不参与逻辑 ----
+  /** 题材标签：导入时从文件名/EPUB 元数据生成，可手动增删 */
   tags?: string[]
+  /** 评分，0–10（与豆瓣同口径）；手动打星写入 2/4/6/8/10 */
   rating?: number
+  /** 豆瓣评价人数，只用于展示「8.6 · 1.2万人评」 */
+  ratingCount?: number
+  /** 评分来源，用来区分豆瓣抓的和自己打的 */
+  metaSource?: 'douban' | 'manual' | 'epub' | 'filename'
+  /** 元数据最近补全时间 */
+  metaUpdatedAt?: number
   sourceRefs?: SourceRef[]
   groups?: number[]
 }

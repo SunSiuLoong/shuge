@@ -220,8 +220,16 @@ const onSync = (): Promise<void> =>
   font-weight: 600;
 }
 
+.btn--primary:disabled {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
 .btn:disabled {
-  opacity: 0.45;
+  /* 半透明会把白字压成粉红底白字，对比度掉到 2:1 以下；改成实心灰态 */
+  border-color: var(--line);
+  background: var(--surface-2);
+  color: var(--text-2);
 }
 
 .hint {

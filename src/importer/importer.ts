@@ -91,6 +91,7 @@ export const importFiles = async (files: File[]): Promise<ImportResult[]> => {
           fileSize: file.size,
           fingerprint,
           cover: parsed.cover,
+          tags: parsed.tags.length ? parsed.tags : undefined,
           toc: parsed.toc,
           chapterCount: parsed.chapterCount,
           opfsPath: fileName,

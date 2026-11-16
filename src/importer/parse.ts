@@ -1,5 +1,7 @@
 import type { TocItem } from '../types'
 import { langText, openBook, type FoliateBook } from '../reader/book'
+import { isFormatOnly, mergeTags, tagsFromName, tagsFromSubject } from '../meta/tags'
+import { cleanTitle, looksLikeFileName } from '../meta/title'
 
 export interface ParsedEpub {
   title: string
@@ -7,6 +9,8 @@ export interface ParsedEpub {
   publisher?: string
   language?: string
   description?: string
+  /** 题材标签：文件名里的方括号 + dc:subject，导入时一起落库 */
+  tags: string[]
   toc: TocItem[]
   chapterCount: number
   cover?: Blob
@@ -69,6 +73,25 @@ const cleanText = (s: string): string =>
     .replace(/\s+/g, ' ')
     .trim()
 
+/**
+ * 书名清洗。有些 EPUB 把转制信息直接写进 dc:title：
+ *   《从前有座灵剑山》（封面精校全本）作者：国王陛下
+ * 书名里不该带「作者：」和「（封面精校全本）」，剥掉再入库。
+ * 只剥「整段都是格式说明」的括注，`（第1部）`「（修订版）」这类会误判的按卷次逻辑保留。
+ */
+const cleanBookTitle = (raw: string): string => {
+  let s = (raw || '').trim()
+  s = s.replace(/\s*(?:作者|著者)\s*[:：]\s*.+$/, '').trim()
+  for (let i = 0; i < 3; i += 1) {
+    const m = /[（(]([^（）()]{1,20})[）)]\s*$/.exec(s)
+    if (!m || !isFormatOnly(m[1])) break
+    s = s.slice(0, m.index).trim()
+  }
+  const wrapped = /^《(.+)》$/.exec(s)
+  if (wrapped && wrapped[1].trim()) s = wrapped[1].trim()
+  return s
+}
+
 const flattenToc = (items: any[] | undefined, depth = 0, out: TocItem[] = []): TocItem[] => {
   if (!items) return out
   for (const item of items) {
@@ -112,10 +135,24 @@ const extractCover = async (book: FoliateBook): Promise<Blob | undefined> => {
 export const parseEpub = async (file: File): Promise<ParsedEpub> => {
   const book = await openBook(file)
   const md = book.metadata ?? {}
-  const title = cleanText(langText(md.title)) || stripExt(file.name)
+  const rawTitle = cleanText(langText(md.title))
+  // 有些 EPUB 直接把文件名当 dc:title，先按搜索规则洗一遍再按书名规则收尾
+  const title =
+    cleanBookTitle(looksLikeFileName(rawTitle) ? cleanTitle(rawTitle) : rawTitle) ||
+    cleanTitle(stripExt(file.name))
   const author = cleanText(langText(md.author)) || authorFromName(file.name) || '佚名'
   const toc = flattenToc(book.toc)
   const cover = await extractCover(book)
+  // dc:subject 往往是「小说、长篇小说」这类图书分类，能留的很少；
+  // 文件名里的 [游戏异界] 才是真题材，所以两边都要，文件名优先
+  const subjects = langText(md.subject)
+    .split(/[、,，;；|]/)
+    .map((s) => cleanText(s))
+    .filter(Boolean)
+  const tags = mergeTags(
+    tagsFromName(file.name, author),
+    tagsFromSubject(subjects),
+  )
 
   return {
     title,
@@ -123,6 +160,7 @@ export const parseEpub = async (file: File): Promise<ParsedEpub> => {
     publisher: cleanText(langText(md.publisher)) || undefined,
     language: cleanText(langText(md.language)) || undefined,
     description: cleanText(langText(md.description)).slice(0, 600) || undefined,
+    tags,
     toc,
     chapterCount: book.sections?.length ?? 0,
     cover,

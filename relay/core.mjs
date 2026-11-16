@@ -53,6 +53,82 @@ const CORS = {
 
 const SOURCES = new Set(['qidian', 'fanqie', 'yousuu', 'lkong'])
 
+/* ---------------- 豆瓣评分（只取分数，不取评论） ---------------- */
+
+const DOUBAN_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+
+const normTitle = (s) =>
+  String(s ?? '')
+    .replace(/[《》「」『』]/g, '')
+    .replace(/[（(][^）)]*[）)]/g, '')
+    .replace(/[\s\u3000·・\-—_、,，。.!！?？:：'"“”]/g, '')
+    .toLowerCase()
+
+const scoreOf = (candTitle, candAuthor, title, author) => {
+  const a = normTitle(candTitle)
+  const b = normTitle(title)
+  if (!a || !b) return 0
+  let s = 0
+  if (a === b) s = 100
+  else if (a.includes(b) || b.includes(a)) s = 60
+  else return 0
+  if (author && author !== '佚名') {
+    const na = normTitle(author)
+    const ca = normTitle(candAuthor)
+    if (ca && (ca.includes(na) || na.includes(ca))) s += 30
+  }
+  return s
+}
+
+/**
+ * 两步：subject_suggest 拿候选 id → rexxar 拿 rating。
+ * 只回 rating / count / doubanId，短评和评论正文一个字段都不取。
+ * 豆瓣标签区已经下线（2026-11 实测页面里 tag 出现 0 次），所以这里也没有标签。
+ */
+const doubanRating = async (title, author) => {
+  const sRes = await fetch(
+    `https://book.douban.com/j/subject_suggest?q=${encodeURIComponent(title)}`,
+    {
+      headers: { 'user-agent': DOUBAN_UA, accept: 'application/json' },
+      signal: AbortSignal.timeout(9000),
+    },
+  )
+  if (!sRes.ok) throw new Error(`suggest ${sRes.status}`)
+  const items = await sRes.json()
+  if (!Array.isArray(items)) return null
+
+  let best = null
+  let bestScore = 0
+  for (const it of items) {
+    if (!it?.id || (it.type && it.type !== 'b')) continue
+    const s = scoreOf(it.title, it.author_name, title, author)
+    if (s > bestScore) {
+      bestScore = s
+      best = it
+    }
+  }
+  if (!best || bestScore < 60) return null
+
+  const dRes = await fetch(
+    `https://m.douban.com/rexxar/api/v2/book/${best.id}?ck=&for_mobile=1`,
+    {
+      headers: { 'user-agent': DOUBAN_UA, referer: 'https://m.douban.com/' },
+      signal: AbortSignal.timeout(9000),
+    },
+  )
+  if (!dRes.ok) throw new Error(`detail ${dRes.status}`)
+  const detail = await dRes.json()
+  const value = detail?.rating?.value
+  if (!value || value <= 0) return null
+  return {
+    rating: Number(value),
+    count: detail?.rating?.count,
+    doubanId: String(best.id),
+    matchedTitle: best.title ?? title,
+  }
+}
+
 export const handler = async (request) => {
   const url = new URL(request.url)
   const { pathname } = url
@@ -66,6 +142,23 @@ export const handler = async (request) => {
       ok: true,
       sources: [...SOURCES].map((s) => ({ site: s, ready: registry.has(s) })),
     })
+  }
+
+  // 豆瓣评分：/api/meta/douban?title=xxx&author=yyy
+  if (pathname === '/api/meta/douban') {
+    const title = url.searchParams.get('title') ?? ''
+    const author = url.searchParams.get('author') ?? ''
+    if (!title.trim()) return json({ ok: false, reason: 'title required' }, 400)
+    try {
+      const hit = await doubanRating(title, author)
+      if (!hit) return json({ ok: false, reason: '豆瓣没收录这本' })
+      return json({ ok: true, ...hit })
+    } catch (e) {
+      return json(
+        { ok: false, reason: e instanceof Error ? e.message : String(e) },
+        502,
+      )
+    }
   }
 
   // 网文站搜索：/api/source/:site/search?title=xxx

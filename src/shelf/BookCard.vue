@@ -22,6 +22,14 @@ const placeholderTone = computed(() => {
 })
 
 const initial = computed(() => props.book.title.trim().charAt(0) || '书')
+
+const rating = computed(() => {
+  const r = props.book.rating
+  return r != null && r > 0 ? r.toFixed(1) : ''
+})
+
+const visibleTags = computed(() => (props.book.tags ?? []).slice(0, 2))
+const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
 </script>
 
 <template>
@@ -29,11 +37,21 @@ const initial = computed(() => props.book.title.trim().charAt(0) || '书')
     <div class="card__cover">
       <img v-if="cover" :src="cover" :alt="book.title" loading="lazy" decoding="async" />
       <span v-else class="card__ph" :style="placeholderTone">{{ initial }}</span>
+      <span
+        v-if="rating"
+        class="card__rating"
+        :title="book.ratingCount ? `${book.ratingCount} 人评价` : '评分'"
+      >{{ rating }}</span>
       <span v-if="finished" class="card__done">已读完</span>
     </div>
     <div class="card__meta">
       <p class="card__title">{{ book.title }}</p>
       <p class="card__author">{{ book.author }}</p>
+      <!-- 固定高度占位：标签有无都不能让同一排的进度条错位 -->
+      <p class="card__tags" :class="{ 'is-empty': !visibleTags.length }">
+        <span v-for="t in visibleTags" :key="t" class="card__tag">{{ t }}</span>
+        <span v-if="moreTags" class="card__tag card__tag--more">+{{ moreTags }}</span>
+      </p>
     </div>
     <div class="card__progress" :class="{ 'is-empty': pct === 0 }">
       <i :style="{ width: `${pct}%` }" />
@@ -94,8 +112,25 @@ const initial = computed(() => props.book.title.trim().charAt(0) || '书')
   font-size: 10px;
   letter-spacing: 0.06em;
   color: #fff;
-  background: rgba(35, 33, 30, 0.55);
-  backdrop-filter: blur(4px);
+  /* 不透明：半透明底在后层是浅色封面时对比度不可控，审计也会判成 1.1:1 */
+  background: #3d3832;
+}
+
+/* 评分压在封面左上角：白字压在书封上，任何底色都能看清 */
+.card__rating {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  min-width: 22px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  text-align: center;
+  color: #fff;
+  background: #3d3832;
 }
 
 .card__meta {
@@ -125,9 +160,47 @@ const initial = computed(() => props.book.title.trim().charAt(0) || '书')
   white-space: nowrap;
 }
 
+/* 标签行固定 16px 高：没有标签时用 visibility 留位，保证同一排进度条齐平 */
+.card__tags {
+  display: flex;
+  gap: 4px;
+  height: 16px;
+  margin: 5px 0 0;
+  overflow: hidden;
+}
+
+.card__tags.is-empty {
+  visibility: hidden;
+}
+
+.card__tag {
+  flex: none;
+  max-width: 100%;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 16px;
+  border-radius: 3px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card__tag--more {
+  padding: 0 1px;
+  color: var(--text-3);
+  background: transparent;
+}
+
+/* 夜读下 --text-2 压 surface-2 只有 4.14:1，10px 小字不够，提亮到正文色 */
+[data-theme='night'] .card__tag {
+  color: var(--text);
+}
+
 .card__progress {
   height: 2px;
-  margin-top: 7px;
+  margin-top: 6px;
   border-radius: 1px;
   background: var(--line);
   overflow: hidden;
