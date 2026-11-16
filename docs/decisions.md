@@ -250,3 +250,13 @@ OPF 没了作者也丢，书架显示"佚名"。`parse.ts` 加 `authorFromName()
 另修两处布局细节：顶栏 52→44（分页模式下 h1 不再顶到栏沿）、`row__value` 允许换行 + chip 收窄（5 个行距档位在 390 宽上原本差 8px 溢出）。
 
 结果：89 条 → 0 条规则项（剩 3 条信息项：封面图左右各 8/7px 属居中正常、滚动浮层覆盖 22px 属设计、尾段 `hidden:0`）。
+
+## 21. WebDAV 同步与发版流程（2026-11-16 晚）
+
+**同步只传索引不传书。** `shuge.json` 一个文件装书目 + 进度 + 书签，理由是 500 本 × 15MB 传网盘既慢又没必要，书本身留在手机上。跨设备对齐用**指纹**（导入时算的采样哈希）而不是本地自增 id。合并规则：进度按 `updatedAt` 逐条取新，书签按 (指纹 + cfi) 去重，书名作者只补空（本地「佚名」时用远端的），不覆盖用户手改过的字段。
+
+**传输两条路，都不通就明说。** 坚果云不返回 CORS 头，浏览器直连必挂（PROPFIND 连预检都过不去）。所以：APK 里走 `CapacitorHttp`（原生 HTTP 不受同源限制），浏览器里走 relay `/api/dav/?to=`。两个都不满足时抛「会被 CORS 拦」而不是静默失败。relay 的 DAV 目标从硬编码坚果云改成 `DAV_ALLOW` 环境变量白名单，避免变成开放代理。
+
+**发版用 `scripts/release.mjs`，不用 SSH key 用 PAT。** 理由：SSH 能推代码，但建 Release 必须走 REST API，SSH 做不到，token 一次解决两件事。token 存 `D:/AI-Workshop/.gh_token`（仓库外），只在推送那一次拼进 URL，不写 `.git/config`。脚本强制 CHANGELOG 里存在 `## v<版本>` 段落才允许发版——版本号涨了但没有更新说明，比不发布更糟。
+
+**草稿与安装包都不入库。** `release/` 与 `*.apk` 在 `.gitignore` 里；GitHub 上只有代码、CHANGELOG、决策记录。

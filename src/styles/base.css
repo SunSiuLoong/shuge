@@ -34,7 +34,8 @@
   --text: #23211e;
   --text-2: #6b665c;
   /* 三级文字原先 #a5a096 对纸白只有 2.5:1，作者名/章节名/提示几乎看不清 */
-  --text-3: #8a857b;
+  /* 3.49:1 过不了 4.5 基线，设置页的分组标题和说明文字全在这一档 */
+  --text-3: #767065;
   --accent: #b4472f;
   --accent-soft: rgba(180, 71, 47, 0.1);
   --line: rgba(0, 0, 0, 0.07);
@@ -51,7 +52,7 @@
   --surface-2: #ece3d1;
   --text: #3a3229;
   --text-2: #746a5b;
-  --text-3: #8b8171;
+  --text-3: #6f6658;
   --accent: #9c4a2f;
   --accent-soft: rgba(156, 74, 47, 0.1);
   --line: rgba(58, 50, 41, 0.1);
@@ -68,7 +69,7 @@
   --surface-2: #e1ebdd;
   --text: #2a322a;
   --text-2: #5f6b5e;
-  --text-3: #7d8a7c;
+  --text-3: #616e60;
   --accent: #4a7050;
   --accent-soft: rgba(74, 112, 80, 0.12);
   --line: rgba(42, 50, 42, 0.09);
@@ -184,15 +185,16 @@ a {
   gap: 4px;
   height: 48px;
   padding: var(--safe-top) 8px 0;
-  background: color-mix(in srgb, var(--bg) 82%, transparent);
-  backdrop-filter: saturate(160%) blur(14px);
-  -webkit-backdrop-filter: saturate(160%) blur(14px);
+  /* 82% 半透明 + 模糊会让滚过去的正文从栏底透出半截字，看着像脏污；
+     浮层要的是「干净地盖住」，不是「朦胧地透出」 */
+  background: var(--bg);
   transition: border-color var(--dur) var(--ease);
   border-bottom: 1px solid transparent;
 }
 
 .topbar.scrolled {
   border-bottom-color: var(--line);
+  box-shadow: 0 1px 12px -8px rgba(0, 0, 0, 0.3);
 }
 
 .topbar__title {

@@ -96,8 +96,23 @@ export const handler = async (request) => {
   if (pathname.startsWith('/api/dav/')) {
     const target = url.searchParams.get('to')
     if (!target) return json({ error: 'missing ?to=' }, 400)
-    if (!/^https:\/\/dav\.jianguoyun\.com\//.test(target)) {
-      return json({ error: 'target not allowed' }, 403)
+    // 只放通白名单里的主机，避免变成任何人可用的开放代理。
+    // 默认只允许坚果云；要接别的 WebDAV（Nextcloud、群晖等）用环境变量扩：
+    //   DAV_ALLOW=dav.jianguoyun.com,cloud.example.com
+    const allow = new Set(
+      (process.env.DAV_ALLOW ?? 'dav.jianguoyun.com')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    )
+    let host = ''
+    try {
+      host = new URL(target).hostname
+    } catch {
+      return json({ error: 'bad target' }, 400)
+    }
+    if (!target.startsWith('https://') || !allow.has(host)) {
+      return json({ error: 'target not allowed', host }, 403)
     }
     const headers = new Headers()
     for (const k of ['authorization', 'depth', 'destination', 'overwrite', 'content-type']) {

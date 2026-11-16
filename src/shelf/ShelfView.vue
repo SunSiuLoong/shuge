@@ -15,6 +15,7 @@ import {
   startShelf,
   SORT_LABELS,
 } from './store'
+import { maybeAutoSync } from '../sync'
 import BookCard from './BookCard.vue'
 
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -85,7 +86,10 @@ const setSortAndClose = (key: typeof sortKey.value): void => {
   showSort.value = false
 }
 
-onMounted(startShelf)
+onMounted(() => {
+  void startShelf()
+  void maybeAutoSync()
+})
 </script>
 
 <template>

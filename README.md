@@ -28,7 +28,8 @@ npm install
 npm run dev          # 本地开发
 npm run build        # 类型检查 + 构建
 npm run start        # 构建并以 preview 方式监听 3000（部署用）
-npm run relay        # 启动中继骨架（默认 8787）
+npm run relay        # 启动中继骨架（默认 8787），浏览器里连 WebDAV 需要它
+node scripts/release.mjs   # 发版：提交 + tag + 推送 + GitHub Release（见 docs/RELEASING.md）
 ```
 
 **手机上测必须走 HTTPS。** 局域网 `http://IP` 不是 secure context，Service Worker、OPFS、持久化存储全部不可用。用部署出来的分享链接测。
@@ -52,16 +53,15 @@ docs/decisions.md         选型、踩坑、对 vendor 的改动
 
 ## 还没做
 
-- 关联网文站（起点 / 番茄 / 优书网 / 龙空）抓标签、评分、评论，按标签分组、按评分排序
-- 坚果云 WebDAV 同步书库与进度
-- 原生 APK 打包
-
-前两项的字段与接口已在数据模型和 `relay/` 里留好，不需要迁移。
+- 关联网文站抓标签、评分、评论，按标签分组、按评分排序（方案见 `docs/sync-and-metadata.md`；豆瓣接口实测可用，起点有 JS 探测墙）
+- 书籍文件本身的 WebDAV 备份（现在只同步书目、进度、书签）
 
 ## 文档
 
 - [`CHANGELOG.md`](CHANGELOG.md)：v1.0 到当前的每版改动
 - [`docs/decisions.md`](docs/decisions.md)：选型、踩坑、对 vendor 的每一处补丁
+- [`docs/RELEASING.md`](docs/RELEASING.md)：发版流程
+- [`docs/sync-and-metadata.md`](docs/sync-and-metadata.md)：WebDAV 同步与网文站关联的调研与方案
 
 ## 兼容性实测
 

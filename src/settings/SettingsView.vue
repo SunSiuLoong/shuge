@@ -5,6 +5,8 @@ import { goBack } from '../router'
 import { settings, THEME_LABELS, type ThemeKey, resetSettings } from '../settings'
 import { READER_PALETTES } from '../reader/theme'
 import { formatBytes, getStorageInfo, requestPersist, type StorageInfo } from '../storage/opfs'
+import { APP_VERSION } from '../version'
+import SyncSection from './SyncSection.vue'
 
 const info = ref<StorageInfo | null>(null)
 const themes = Object.keys(THEME_LABELS) as ThemeKey[]
@@ -92,6 +94,8 @@ onMounted(refresh)
         </button>
       </section>
 
+      <SyncSection />
+
       <section class="group">
         <p class="group__title">其他</p>
         <button class="line line--btn" type="button" @click="reset">
@@ -100,7 +104,7 @@ onMounted(refresh)
         </button>
         <div class="line">
           <span>版本</span>
-          <span class="line__value">0.1.0</span>
+          <span class="line__value">v{{ APP_VERSION }}</span>
         </div>
       </section>
 
@@ -116,6 +120,11 @@ onMounted(refresh)
   display: flex;
   flex-direction: column;
   height: 100%;
+}
+
+.settings .topbar {
+  /* 设置页顶栏常驻分隔线：正文滚到栏下时需要一个明确的边界 */
+  border-bottom-color: var(--line);
 }
 
 .settings__scroll {
