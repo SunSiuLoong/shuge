@@ -8,8 +8,8 @@ export const ISSUES_URL = `${REPO_URL}/issues`
 export const RELEASES_URL = `${REPO_URL}/releases`
 export const LATEST_RELEASE_API = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`
 
-/** 爱发电主页：暂时留空，填了就会在关于页出现入口 */
-export const AFDIAN_URL = ''
+/** 爱发电主页：填了就会在关于页出现入口，留空则显示「暂未开放」 */
+export const AFDIAN_URL = 'https://ifdian.net/a/shuge-reader'
 /** 打赏码图片：放到 public/ 下再写相对路径，例如 'donate.png' */
 export const DONATE_IMAGE = ''
 

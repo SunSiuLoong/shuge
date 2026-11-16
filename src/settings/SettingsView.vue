@@ -1,37 +1,47 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { ArrowLeft, Check, ChevronRight } from 'lucide-vue-next'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { ArrowLeft, Check, ChevronRight, Image, RotateCcw } from 'lucide-vue-next'
 import { goBack, navigate } from '../router'
 import {
+  appDark,
   settings,
+  MONET_SOURCE_LABELS,
+  MONET_SOURCE_NOTES,
   SCHEME_LABELS,
   THEME_LABELS,
   UI_STYLE_LABELS,
   UI_STYLE_NOTES,
   resetSettings,
+  type MonetSource,
   type SchemeKey,
   type ThemeKey,
   type UiStyleKey,
 } from '../settings'
+import { MONET_PRESETS, accentFromImage, currentAccentHex } from '../ui/monet'
+import { isSystemColorAvailable } from '../ui/systemcolor'
 import { READER_PALETTES } from '../reader/theme'
 import { formatBytes, getStorageInfo, requestPersist, type StorageInfo } from '../storage/opfs'
 import { APP_VERSION } from '../version'
-import {
-  SORT_LABELS,
-  groupMode,
-  setGroupMode,
-  setSort,
-  sortKey,
-  type SortKey,
-} from '../shelf/store'
+import { SORT_LABELS, setSort, sortKey, type SortKey } from '../shelf/store'
 import SyncSection from './SyncSection.vue'
 import MetaSection from './MetaSection.vue'
 
 const info = ref<StorageInfo | null>(null)
+const imageInput = ref<HTMLInputElement | null>(null)
+const appliedHex = ref(currentAccentHex() ?? settings.monetHex)
+
 const themes = Object.keys(THEME_LABELS) as ThemeKey[]
 const schemes = Object.keys(SCHEME_LABELS) as SchemeKey[]
 const styles = Object.keys(UI_STYLE_LABELS) as UiStyleKey[]
+const monetSources = Object.keys(MONET_SOURCE_LABELS) as MonetSource[]
 const columns = [2, 3, 4]
+
+/** 网页端没有动态色，这里如实说，不要让用户以为是 bug */
+const systemNote = computed(() =>
+  isSystemColorAvailable()
+    ? '读手机壁纸的动态色（Android 12 以上）。换了壁纸回到 App 会自动变。'
+    : '当前不是安卓 App（或系统低于 12），取不到壁纸色，会先用下面的兜底色。',
+)
 
 const usageText = computed(() => {
   if (!info.value) return '读取中…'
@@ -58,10 +68,8 @@ const askPersist = async (): Promise<void> => {
 
 const reset = (): void => {
   resetSettings()
-}
-
-const toggleGroup = (): void => {
-  setGroupMode(groupMode.value === 'tag' ? 'none' : 'tag')
+  void refresh()
+  syncApplied()
 }
 
 const themeSwatch = (key: ThemeKey): Record<string, string> => {
@@ -71,7 +79,42 @@ const themeSwatch = (key: ThemeKey): Record<string, string> => {
   return { background: READER_PALETTES[key].bg }
 }
 
-onMounted(refresh)
+const pickPreset = (hex: string): void => {
+  settings.monetHex = hex
+  settings.monetSource = 'manual'
+  syncApplied()
+}
+
+const pickImage = (): void => imageInput.value?.click()
+
+const onImage = async (e: Event): Promise<void> => {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  const hex = await accentFromImage(file)
+  if (!hex) {
+    appliedHex.value = '取色失败，换一张试试'
+    return
+  }
+  settings.monetHex = hex
+  settings.monetSource = 'image'
+  syncApplied()
+}
+
+/** 取色是异步的（系统色要过桥），显示值得等一轮 */
+const syncApplied = (): void => {
+  void nextTick(() => {
+    appliedHex.value = currentAccentHex() ?? settings.monetHex
+  })
+}
+
+watch([() => settings.monetSource, () => settings.monetHex, appDark], syncApplied)
+
+onMounted(() => {
+  void refresh()
+  syncApplied()
+})
 </script>
 
 <template>
@@ -84,8 +127,12 @@ onMounted(refresh)
     </header>
 
     <div class="settings__scroll scroll-y">
-      <section class="group">
-        <p class="group__title">界面风格</p>
+      <!-- 01 外观 -->
+      <section class="card">
+        <p class="eyebrow">01 / APPEARANCE</p>
+        <h2 class="card__title">外观</h2>
+        <p class="card__note">整屏的明暗和质感。阅读页的配色单独在 03 里调。</p>
+
         <div class="seg">
           <button
             v-for="key in schemes"
@@ -123,8 +170,72 @@ onMounted(refresh)
         </div>
       </section>
 
-      <section class="group">
-        <p class="group__title">阅读主题</p>
+      <!-- 02 主题配色 -->
+      <section class="card" :class="{ 'is-muted': settings.uiStyle !== 'monet' }">
+        <p class="eyebrow">02 / TONAL PALETTE</p>
+        <h2 class="card__title">主题配色</h2>
+        <p class="card__note">
+          莫奈取色的颜色从哪来。浅色与深色自动配套，强调色会按对比度收一档，不是原色照搬。
+        </p>
+
+        <div class="chips">
+          <button
+            v-for="key in monetSources"
+            :key="key"
+            type="button"
+            class="chip"
+            :class="{ 'is-active': settings.monetSource === key }"
+            @click="settings.monetSource = key"
+          >
+            {{ MONET_SOURCE_LABELS[key] }}
+          </button>
+        </div>
+
+        <p class="hint hint--tight">
+          {{ settings.monetSource === 'system' ? systemNote : MONET_SOURCE_NOTES[settings.monetSource] }}
+        </p>
+
+        <div v-if="settings.monetSource === 'manual'" class="swatches">
+          <button
+            v-for="p in MONET_PRESETS"
+            :key="p.key"
+            type="button"
+            class="swatch"
+            :class="{ 'is-active': settings.monetHex.toLowerCase() === p.accent.toLowerCase() }"
+            @click="pickPreset(p.accent)"
+          >
+            <span class="swatch__bars">
+              <i v-for="s in p.swatches" :key="s" :style="{ background: s }" />
+            </span>
+            <span class="swatch__name">{{ p.name }}</span>
+          </button>
+        </div>
+
+        <div v-if="settings.monetSource === 'image'" class="picker">
+          <button class="picker__btn" type="button" @click="pickImage">
+            <Image :size="16" :stroke-width="1.8" />
+            选择一张图片
+          </button>
+          <span class="picker__note">只在本地读，不上传</span>
+        </div>
+
+        <div class="current">
+          <span class="current__chip" :style="{ background: appliedHex.startsWith('#') ? appliedHex : settings.monetHex }" />
+          <span class="current__label">当前主色</span>
+          <span class="current__hex">{{ appliedHex }}</span>
+        </div>
+
+        <p v-if="settings.uiStyle !== 'monet'" class="hint hint--tight">
+          现在用的是「{{ UI_STYLE_LABELS[settings.uiStyle] }}」，这里选的色要切到莫奈才生效。
+        </p>
+      </section>
+
+      <!-- 03 阅读 -->
+      <section class="card">
+        <p class="eyebrow">03 / READER</p>
+        <h2 class="card__title">阅读主题</h2>
+        <p class="card__note">只影响正文页。字号、行距、字体在阅读界面的「Aa」里调。</p>
+
         <div class="themes">
           <button
             v-for="key in themes"
@@ -139,14 +250,17 @@ onMounted(refresh)
           </button>
         </div>
         <p class="hint hint--tight">
-          「跟随 App」时，App 切到深色阅读界面就变夜读；也可以单独锁一套纸色，不受 App 明暗影响。
+          「跟随 App」时，App 切深色阅读页就变夜读；也可以单独锁一套纸色。
         </p>
       </section>
 
-      <section class="group">
-        <p class="group__title">书架</p>
+      <!-- 04 书架 -->
+      <section class="card">
+        <p class="eyebrow">04 / SHELF</p>
+        <h2 class="card__title">书架</h2>
+        <p class="card__note">书的排列方式。标签页按题材分页，同名标签自动归到一起。</p>
 
-        <div class="line line--stack">
+        <div class="row">
           <span>显示方式</span>
           <div class="seg seg--inline">
             <button
@@ -168,7 +282,7 @@ onMounted(refresh)
           </div>
         </div>
 
-        <div v-if="settings.shelfLayout === 'grid'" class="line line--stack">
+        <div v-if="settings.shelfLayout === 'grid'" class="row">
           <span>每行本数</span>
           <div class="seg seg--inline">
             <button
@@ -184,12 +298,17 @@ onMounted(refresh)
           </div>
         </div>
 
-        <label class="line line--switch">
+        <label class="row row--switch">
           <span>显示阅读进度百分比</span>
           <input v-model="settings.showPercent" class="toggle" type="checkbox" />
         </label>
 
-        <p class="seg__label">排序方式</p>
+        <label class="row row--switch">
+          <span>顶部标签页</span>
+          <input v-model="settings.shelfTabs" class="toggle" type="checkbox" />
+        </label>
+
+        <p class="sub">排序方式</p>
         <div class="chips">
           <button
             v-for="(label, key) in SORT_LABELS"
@@ -202,28 +321,20 @@ onMounted(refresh)
             {{ label }}
           </button>
         </div>
-
-        <label class="line line--switch">
-          <span>按标签分组</span>
-          <input
-            class="toggle"
-            type="checkbox"
-            :checked="groupMode === 'tag'"
-            @change="toggleGroup"
-          />
-        </label>
       </section>
 
-      <section class="group">
-        <p class="group__title">存储</p>
-        <div class="line">
+      <!-- 05 存储 -->
+      <section class="card">
+        <p class="eyebrow">05 / STORAGE</p>
+        <h2 class="card__title">存储</h2>
+        <div class="row">
           <span>占用</span>
-          <span class="line__value">{{ usageText }}</span>
+          <span class="row__value">{{ usageText }}</span>
         </div>
         <div class="meter"><i :style="{ width: `${usagePercent}%` }" /></div>
-        <div class="line">
+        <div class="row">
           <span>持久化</span>
-          <span class="line__value">{{ persistText }}</span>
+          <span class="row__value">{{ persistText }}</span>
         </div>
         <button v-if="!info?.persisted" class="link" type="button" @click="askPersist">
           申请持久化存储，避免书库被系统清理
@@ -235,15 +346,20 @@ onMounted(refresh)
 
       <MetaSection />
 
-      <section class="group">
-        <p class="group__title">其他</p>
-        <button class="line line--btn" type="button" @click="reset">
-          <span>恢复默认排版</span>
-          <ChevronRight :size="15" :stroke-width="2" />
+      <!-- 06 其他 -->
+      <section class="card">
+        <p class="eyebrow">06 / ABOUT</p>
+        <h2 class="card__title">其他</h2>
+        <button class="row row--btn" type="button" @click="reset">
+          <span>恢复默认设置</span>
+          <span class="row__value">
+            <RotateCcw :size="14" :stroke-width="1.8" />
+            重置
+          </span>
         </button>
-        <button class="line line--btn" type="button" @click="navigate('/about')">
-          <span>关于</span>
-          <span class="line__value">
+        <button class="row row--btn" type="button" @click="navigate('/about')">
+          <span>关于书阁</span>
+          <span class="row__value">
             v{{ APP_VERSION }}
             <ChevronRight :size="15" :stroke-width="2" />
           </span>
@@ -254,6 +370,8 @@ onMounted(refresh)
         本地优先：书籍文件存在浏览器私有目录，不上传、不联网。换设备或清缓存会丢，重要藏书请自行留档。
       </p>
     </div>
+
+    <input ref="imageInput" class="hidden" type="file" accept="image/*" @change="onImage" />
   </div>
 </template>
 
@@ -272,23 +390,56 @@ onMounted(refresh)
 .settings__scroll {
   flex: 1;
   min-height: 0;
-  padding: 8px 18px calc(40px + var(--safe-bottom));
+  padding: 10px 16px calc(40px + var(--safe-bottom));
 }
 
-.group {
-  padding: 18px 0 6px;
-  border-bottom: 1px solid var(--line);
+.hidden {
+  display: none;
 }
 
-.group:last-of-type {
-  border-bottom: 0;
+/* ---- 分节卡片 ---- */
+.card {
+  margin-bottom: 14px;
+  padding: 16px 15px 14px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  border: 1px solid var(--line);
 }
 
-.group__title {
-  margin: 0 0 12px;
-  font-size: 12px;
-  letter-spacing: 0.1em;
+/*
+ * 深色下卡片不填色，只留描边：强调色当文字压在 #202326 上只有 4.3，
+ * 压页面底色 #16181a 才够 4.5。留白也更透气。
+ */
+[data-scheme='dark'] .card {
+  background: transparent;
+}
+
+.card.is-muted {
+  opacity: 0.72;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  font-variant-numeric: tabular-nums;
   color: var(--text-3);
+}
+
+.card__title {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.card__note {
+  margin: 6px 0 14px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text-2);
 }
 
 /* ---- 分段控件 ---- */
@@ -453,6 +604,103 @@ onMounted(refresh)
   color: var(--text-3);
 }
 
+/* ---- 色板 ---- */
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 4px 0 12px;
+}
+
+.swatch {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 5px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  text-align: left;
+}
+
+.swatch.is-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.swatch__bars {
+  display: flex;
+  height: 34px;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.swatch__bars i {
+  flex: 1;
+}
+
+.swatch__name {
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+/* 选中靠色板外圈提示，文字不用强调色：色板底是 --surface-2，accent 压上去过不了 4.5 */
+.swatch.is-active .swatch__name {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.picker__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
+.picker__note {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.current__chip {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  outline: 1px solid var(--line);
+  outline-offset: -1px;
+}
+
+.current__hex {
+  margin-left: auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  color: var(--text-3);
+  text-transform: uppercase;
+}
+
 /* ---- 阅读主题色块 ---- */
 .themes {
   display: flex;
@@ -501,13 +749,13 @@ onMounted(refresh)
 }
 
 .hint--tight {
-  margin: 2px 0 8px;
+  margin: 8px 0 10px;
   font-size: 11.5px;
   color: var(--text-3);
 }
 
 /* ---- 通用行 ---- */
-.line {
+.row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -519,23 +767,19 @@ onMounted(refresh)
   color: var(--text);
 }
 
-.line--btn:active {
+.row--btn:active {
   opacity: 0.6;
 }
 
-.line--switch {
+.row--switch {
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
 
-.line--stack {
-  padding: 4px 0;
-}
-
-.line__value {
+.row__value {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   font-size: 13px;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
@@ -565,10 +809,7 @@ onMounted(refresh)
   text-align: left;
 }
 
-.seg__label {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
+.sub {
   margin: 14px 0 8px;
   font-size: 12px;
   font-weight: 600;
@@ -580,7 +821,7 @@ onMounted(refresh)
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding-bottom: 6px;
+  padding-bottom: 4px;
 }
 
 .chip {
@@ -609,7 +850,7 @@ onMounted(refresh)
 }
 
 .note {
-  margin: 22px 0 0;
+  margin: 18px 2px 0;
   font-size: 11.5px;
   line-height: 1.7;
   color: var(--text-3);

@@ -14,6 +14,14 @@ export type FlowKey = 'paginated' | 'scrolled'
 export type ShelfLayout = 'grid' | 'list'
 /** 自动关联评分时优先信哪个站；auto = 谁评分人数多用谁 */
 export type RatingSource = 'auto' | 'douban' | 'weread'
+/**
+ * 莫奈取色的颜色来源。
+ * system = 手机系统壁纸的动态取色（Android 12+ Material You）
+ * manual = 自选色板
+ * image  = 从自己选的图片里取
+ * 早期版本从「最近读的那本书的封面」取色，用户明确否掉了这条路，不再作为选项。
+ */
+export type MonetSource = 'system' | 'manual' | 'image'
 
 export interface ReaderSettings {
   scheme: SchemeKey
@@ -33,6 +41,12 @@ export interface ReaderSettings {
   shelfColumns: number
   /** 卡片/列表上显示「全书百分比」 */
   showPercent: boolean
+  /** 书架顶部的标签页（全部 / 未分类 / 各题材） */
+  shelfTabs: boolean
+  /** 莫奈主色的来源 */
+  monetSource: MonetSource
+  /** 自选/图片取色得到的颜色，system 模式下作为取不到系统色时的兜底 */
+  monetHex: string
   ratingSource: RatingSource
 }
 
@@ -52,6 +66,9 @@ const DEFAULTS: ReaderSettings = {
   shelfLayout: 'grid',
   shelfColumns: 2,
   showPercent: false,
+  shelfTabs: true,
+  monetSource: 'system',
+  monetHex: '#7c8f7a',
   ratingSource: 'auto',
 }
 
@@ -60,6 +77,7 @@ const SCHEMES: SchemeKey[] = ['auto', 'light', 'dark']
 const STYLES: UiStyleKey[] = ['classic', 'monet', 'glass']
 const LAYOUTS: ShelfLayout[] = ['grid', 'list']
 const SOURCES: RatingSource[] = ['auto', 'douban', 'weread']
+const MONET_SOURCES: MonetSource[] = ['system', 'manual', 'image']
 
 const pick = <T extends string>(list: T[], v: unknown, fallback: T): T =>
   typeof v === 'string' && (list as string[]).includes(v) ? (v as T) : fallback
@@ -87,6 +105,11 @@ const migrate = (raw: Record<string, unknown>): Partial<ReaderSettings> => {
   const cols = Number(out.shelfColumns)
   out.shelfColumns = Number.isFinite(cols) ? Math.min(4, Math.max(2, Math.round(cols))) : 2
   if (typeof out.showPercent !== 'boolean') out.showPercent = false
+  if (typeof out.shelfTabs !== 'boolean') out.shelfTabs = true
+  out.monetSource = pick(MONET_SOURCES, out.monetSource, 'system')
+  if (typeof out.monetHex !== 'string' || !/^#[0-9a-f]{6}$/i.test(out.monetHex)) {
+    out.monetHex = DEFAULTS.monetHex
+  }
   return out as Partial<ReaderSettings>
 }
 
@@ -188,8 +211,20 @@ export const UI_STYLE_LABELS: Record<UiStyleKey, string> = {
 
 export const UI_STYLE_NOTES: Record<UiStyleKey, string> = {
   classic: '纸感底色，细边框，最省电',
-  monet: '从书封提取主色，整屏跟着变',
+  monet: '跟系统壁纸取色，整屏跟着变',
   glass: '半透明磨砂，浮层像一片玻璃',
+}
+
+export const MONET_SOURCE_LABELS: Record<MonetSource, string> = {
+  system: '系统取色',
+  manual: '自选配色',
+  image: '图片取色',
+}
+
+export const MONET_SOURCE_NOTES: Record<MonetSource, string> = {
+  system: '读手机壁纸的动态色，Android 12 以上有效',
+  manual: '从下面的色板里挑一个主色',
+  image: '用一张自己的图取主色',
 }
 
 export const RATING_SOURCE_LABELS: Record<RatingSource, string> = {

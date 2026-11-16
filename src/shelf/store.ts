@@ -4,7 +4,8 @@ import { db } from '../db'
 import type { Book, Progress } from '../types'
 
 export type SortKey = 'recent' | 'added' | 'title' | 'author' | 'rating'
-export type GroupMode = 'none' | 'tag'
+/** 书架顶部的标签页：__all__ = 全部，__untagged__ = 未分类，其余是题材名 */
+export type ShelfTabKey = string
 
 export const SORT_LABELS: Record<SortKey, string> = {
   recent: '最近阅读',
@@ -20,11 +21,9 @@ export const loading = ref(true)
 export const sortKey = ref<SortKey>(
   (localStorage.getItem('shuge.sort') as SortKey) || 'recent',
 )
-/** 书架是否按标签分组浏览 */
-export const groupMode = ref<GroupMode>(
-  (localStorage.getItem('shuge.group') as GroupMode) || 'none',
-)
-/** 当前选中的标签筛选，null 表示全部 */
+/** 书架顶部的标签页选中项。'__all__' 表示不筛 */
+export const shelfTab = ref<ShelfTabKey>(localStorage.getItem('shuge.tab') || '__all__')
+/** 旧版的「按标签筛选」，标签页接管后只保留导出，避免别处引用编译不过 */
 export const tagFilter = ref<string | null>(null)
 
 export const setSort = (key: SortKey): void => {
@@ -32,13 +31,14 @@ export const setSort = (key: SortKey): void => {
   localStorage.setItem('shuge.sort', key)
 }
 
-export const setGroupMode = (mode: GroupMode): void => {
-  groupMode.value = mode
-  localStorage.setItem('shuge.group', mode)
+export const setShelfTab = (key: ShelfTabKey): void => {
+  shelfTab.value = key
+  localStorage.setItem('shuge.tab', key)
 }
 
 export const setTagFilter = (tag: string | null): void => {
   tagFilter.value = tag
+  if (tag) setShelfTab(tag)
 }
 
 const collator = new Intl.Collator('zh-Hans-CN', { numeric: true })
@@ -99,44 +99,40 @@ watch(allTags, (list) => {
   }
 })
 
-export const visibleBooks = computed<Book[]>(() => {
-  const key = tagFilter.value
-  if (!key) return sortedBooks.value
+export interface ShelfTab {
+  key: ShelfTabKey
+  label: string
+  count: number
+}
+
+/**
+ * 标签页列表：全部 → 未分类（有才算）→ 各题材（按书目数降序）。
+ * 顺序刻意让「全部」永远在第一格，切回来不用找。
+ */
+export const shelfTabs = computed<ShelfTab[]>(() => {
+  const out: ShelfTab[] = [{ key: '__all__', label: '全部', count: books.value.length }]
+  const untagged = untaggedCount.value
+  if (untagged > 0) out.push({ key: '__untagged__', label: '未分类', count: untagged })
+  for (const t of allTags.value) out.push({ key: t.name, label: t.name, count: t.count })
+  return out
+})
+
+/** 当前标签页里的书；排序仍走全局排序设置 */
+export const tabBooks = computed<Book[]>(() => {
+  const key = shelfTab.value
+  if (key === '__all__') return sortedBooks.value
+  if (key === '__untagged__') return sortedBooks.value.filter((b) => !b.tags?.length)
   return sortedBooks.value.filter((b) => (b.tags ?? []).includes(key))
 })
 
-export interface BookGroup {
-  key: string
-  label: string
-  count: number
-  books: Book[]
-}
+/** 标签被删掉后当前页要失效，否则书架会空成一片而看不出原因 */
+watch(shelfTabs, (list) => {
+  if (!list.some((t) => t.key === shelfTab.value)) setShelfTab('__all__')
+})
 
-/** 按主标签（tags[0]）分组；组顺序沿用标签热度，未分类排最后 */
-export const groupedBooks = computed<BookGroup[]>(() => {
-  const list = visibleBooks.value
-  if (groupMode.value === 'none') {
-    return [{ key: '__all__', label: '', count: list.length, books: list }]
-  }
-  const map = new Map<string, Book[]>()
-  for (const b of list) {
-    const key = b.tags?.[0]?.trim() || ''
-    const arr = map.get(key)
-    if (arr) arr.push(b)
-    else map.set(key, [b])
-  }
-  const hot = new Map(allTags.value.map((t, i) => [t.name, i]))
-  const groups: BookGroup[] = [...map.entries()].map(([key, arr]) => ({
-    key: key || '__untagged__',
-    label: key || '未分类',
-    count: arr.length,
-    books: arr,
-  }))
-  return groups.sort((a, b) => {
-    if (a.key === '__untagged__') return 1
-    if (b.key === '__untagged__') return -1
-    return (hot.get(a.label) ?? 999) - (hot.get(b.label) ?? 999)
-  })
+/** 选中页里一本书都没有时（比如刚清空标签），也要退回全部 */
+watch(tabBooks, (list) => {
+  if (!list.length && shelfTab.value !== '__all__' && books.value.length) setShelfTab('__all__')
 })
 
 export const percentOf = (bookId?: number): number => {

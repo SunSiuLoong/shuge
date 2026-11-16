@@ -6,18 +6,16 @@ import { navigate } from '../router'
 import { importFiles, importState, removeBook } from '../importer/importer'
 import { formatBytes } from '../storage/opfs'
 import {
-  allTags,
   books,
-  groupMode,
-  groupedBooks,
   loading,
   percentOf,
-  setGroupMode,
+  setShelfTab,
   setSort,
-  setTagFilter,
+  shelfTab,
+  shelfTabs,
   sortKey,
   startShelf,
-  tagFilter,
+  tabBooks,
   SORT_LABELS,
 } from './store'
 import type { SortKey } from './store'
@@ -111,9 +109,9 @@ const openMetaSheet = (): void => {
 
 const chooseSort = (key: SortKey): void => setSort(key)
 
-const chooseTag = (tag: string | null): void => setTagFilter(tag)
+const chooseTab = (key: string): void => setShelfTab(key)
 
-const toggleGroup = (): void => setGroupMode(groupMode.value === 'tag' ? 'none' : 'tag')
+const hasTabs = computed(() => settings.shelfTabs && shelfTabs.value.length > 1)
 
 onMounted(() => {
   void startShelf()
@@ -135,6 +133,21 @@ onMounted(() => {
       </button>
     </header>
 
+    <!-- 标签页：全部 / 未分类 / 各题材。贴在顶栏下面，滚动时不动 -->
+    <nav v-if="hasTabs && !isEmpty" class="tabs" aria-label="按标签筛选">
+      <button
+        v-for="t in shelfTabs"
+        :key="t.key"
+        class="tab"
+        :class="{ 'is-active': shelfTab === t.key }"
+        type="button"
+        @click="chooseTab(t.key)"
+      >
+        <span class="tab__label">{{ t.label }}</span>
+        <span class="tab__count">{{ t.count }}</span>
+      </button>
+    </nav>
+
     <main class="shelf__scroll scroll-y" @scroll="onScroll">
       <div v-if="isEmpty" class="empty">
         <div class="empty__mark">
@@ -150,46 +163,34 @@ onMounted(() => {
       </div>
 
       <template v-else>
-        <!-- 选中标签后的筛选条：不占滚动区，随时能撤 -->
-        <div v-if="tagFilter" class="filterbar">
-          <Tag :size="13" :stroke-width="2" />
-          <span class="filterbar__name">{{ tagFilter }}</span>
-          <button class="filterbar__x" type="button" @click="chooseTag(null)">
-            <X :size="13" :stroke-width="2.2" />
-            全部
-          </button>
+        <div
+          class="grid"
+          :class="{ 'is-list': settings.shelfLayout === 'list' }"
+          :style="{ '--cols': settings.shelfColumns }"
+        >
+          <div
+            v-for="book in tabBooks"
+            :key="book.id"
+            class="grid__item"
+            @pointerdown="pressStart(book)"
+            @pointerup="pressEnd"
+            @pointerleave="pressEnd"
+            @pointercancel="pressEnd"
+            @contextmenu.prevent="actionBook = book"
+          >
+            <BookCard
+              :book="book"
+              :percent="percentOf(book.id)"
+              :layout="settings.shelfLayout"
+              :show-percent="settings.showPercent"
+              @open="openBook"
+            />
+          </div>
         </div>
 
-        <section v-for="g in groupedBooks" :key="g.key" class="group">
-          <header v-if="g.label" class="group__head">
-            <span class="group__name">{{ g.label }}</span>
-            <span class="group__count">{{ g.count }} 本</span>
-          </header>
-          <div
-            class="grid"
-            :class="{ 'is-list': settings.shelfLayout === 'list' }"
-            :style="{ '--cols': settings.shelfColumns }"
-          >
-            <div
-              v-for="book in g.books"
-              :key="book.id"
-              class="grid__item"
-              @pointerdown="pressStart(book)"
-              @pointerup="pressEnd"
-              @pointerleave="pressEnd"
-              @pointercancel="pressEnd"
-              @contextmenu.prevent="actionBook = book"
-            >
-              <BookCard
-                :book="book"
-                :percent="percentOf(book.id)"
-                :layout="settings.shelfLayout"
-                :show-percent="settings.showPercent"
-                @open="openBook"
-              />
-            </div>
-          </div>
-        </section>
+        <p v-if="!tabBooks.length" class="tabempty">
+          这个标签下还没有书
+        </p>
 
         <footer class="shelf__foot" :class="{ 'is-faded': summary }">
           <span>{{ books.length }} 本 · {{ totalLabel }}</span>
@@ -294,34 +295,12 @@ onMounted(() => {
             <span class="switch" :class="{ 'is-on': settings.showPercent }" />
           </button>
 
-          <p class="seg__label">
-            按标签查看
-            <span v-if="!allTags.length" class="seg__note">导入后自动从书名提取</span>
-          </p>
-          <div v-if="allTags.length" class="chips chips--scroll">
-            <button
-              class="chip"
-              :class="{ 'is-active': !tagFilter }"
-              type="button"
-              @click="chooseTag(null)"
-            >全部 {{ books.length }}</button>
-            <button
-              v-for="t in allTags"
-              :key="t.name"
-              class="chip"
-              :class="{ 'is-active': tagFilter === t.name }"
-              type="button"
-              @click="chooseTag(t.name)"
-            >{{ t.name }} {{ t.count }}</button>
-          </div>
-
-          <p class="seg__label">浏览方式</p>
-          <button class="switchrow" type="button" @click="toggleGroup">
+          <button class="switchrow" type="button" @click="settings.shelfTabs = !settings.shelfTabs">
             <span class="switchrow__text">
-              按标签分组
-              <span class="switchrow__note">把同一题材的书排在一起</span>
+              标签页
+              <span class="switchrow__note">书架顶部按题材分页，全部 / 未分类 / 各标签</span>
             </span>
-            <span class="switch" :class="{ 'is-on': groupMode === 'tag' }" />
+            <span class="switch" :class="{ 'is-on': settings.shelfTabs }" />
           </button>
 
           <button class="done" type="button" @click="showSort = false">完成</button>
@@ -457,6 +436,71 @@ onMounted(() => {
 
 .filterbar__x:active {
   background: var(--line);
+}
+
+/* ---- 标签页 ---- */
+.tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding: 0 18px 10px;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  flex: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-height: 40px;
+  padding: 0 13px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--line);
+  transition: background-color 140ms var(--ease), color 140ms var(--ease),
+    border-color 140ms var(--ease);
+}
+
+.tab:active {
+  transform: scale(0.97);
+}
+
+.tab.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.tab__count {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  /* 计数比标题淡一档，但不能再浅：11px 的字对比度必须过 4.5 */
+  color: var(--text-2);
+}
+
+/* 深色下 --text-2 压透明底只有 4.1，再亮一档 */
+[data-scheme='dark'] .tab__count {
+  color: #9d998f;
+}
+
+.tab.is-active .tab__count {
+  color: inherit;
+  opacity: 0.72;
+}
+
+.tabempty {
+  margin: 40px 0 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-3);
 }
 
 .group {

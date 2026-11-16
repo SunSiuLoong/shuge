@@ -1,11 +1,15 @@
 /**
- * 莫奈取色：从当前书封里抽一个主色，把整屏的强调色换掉。
+ * 莫奈取色：取一个主色，把整屏的强调色换掉。
  *
- * 为什么不是「每个界面都有自己的色」：莫奈的效果来自整片色调统一——
- * 一个 accent 派生出的柔和晕染（--monet-wash）+ 同一个 accent 用在按钮/进度/选中药丸上。
- * 取色只看封面，因为那是用户视觉上最先认到的东西。
+ * 颜色来源有三条路（见 settings.monetSource）：
+ * - system：手机系统壁纸的动态取色（Android 12+ Material You），默认；
+ * - manual：自选色板；
+ * - image ：用户自己选的图片。
  *
- * 取色失败（没封面 / 图片解码失败 / canvas 被污染）时退回陶土红，
+ * 早期版本从「最近读的那本书的封面」取色——已废弃：用户要的是整机一致的观感，
+ * 换本书就换一套颜色反而乱。
+ *
+ * 取不到色（非原生壳、系统低于 12、图片解码失败）时退回 settings.monetHex，
  * 不会让界面变成没有强调色的灰板。
  */
 
@@ -139,12 +143,14 @@ const usable = (c: MonetColor, dark: boolean): MonetColor => {
   if (dark) {
     let l = clamp(c.l, 44, 56)
     let guard = 0
-    // 要对 #16181a（亮度 0.010）达到 4.5:1，需要 relLum ≥ 0.22
-    while (guard < 24 && relLum({ h: c.h, s, l }) < 0.22) {
+    // 按最浅的那层底来算：#282c30（浮层面板 surface）比页面底色 #16181a 亮，
+    // 只按 #16181a 过关的话，弹层里的选中文字会掉到 4.38。
+    // 对 #282c30 达到 4.5:1 需要 relLum ≥ 0.294。
+    while (guard < 24 && relLum({ h: c.h, s, l }) < 0.294) {
       l += 2
       guard += 1
     }
-    return { h: c.h, s, l: Math.min(76, l) }
+    return { h: c.h, s, l: Math.min(80, l) }
   }
   let l = clamp(c.l, 34, 46)
   let guard = 0
@@ -209,3 +215,58 @@ export const applyMonetFromCover = async (blob: Blob | undefined, dark: boolean)
   const color = blob && blob.size > 0 ? await extractAccent(blob) : null
   applyMonet(color, dark)
 }
+
+/* ---------- hex 往来：系统动态色 / 色板 / 图片取色最后都落到 hex ---------- */
+
+export const hexToMonet = (hex: string): MonetColor | null => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+  if (!m) return null
+  const n = Number.parseInt(m[1], 16)
+  const [h, s, l] = rgbToHsl((n >> 16) & 255, (n >> 8) & 255, n & 255)
+  return { h, s, l }
+}
+
+export const monetToHex = (c: MonetColor): string => {
+  const [r, g, b] = hslToRgb(c)
+  return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`
+}
+
+/** 当前生效的强调色（hex）。设置页拿它显示「当前主色」 */
+export const currentAccentHex = (): string | null =>
+  currentAccent ? monetToHex(currentAccent) : null
+
+/**
+ * 按 hex 上色。会先压进「能当强调色」的亮度区间，
+ * 所以设置页显示的颜色可能和用户选的略有出入——这是为了对比度，不是 bug。
+ */
+export const applyAccentHex = (hex: string, dark: boolean): string | null => {
+  const c = hexToMonet(hex)
+  if (!c) return null
+  applyMonet(c, dark)
+  return monetToHex(usable(c, dark))
+}
+
+/** 图片取色：和封面取色共用一套算法，只是入口不同 */
+export const accentFromImage = async (blob: Blob): Promise<string | null> => {
+  const c = await extractAccent(blob)
+  return c ? monetToHex(c) : null
+}
+
+export interface MonetPreset {
+  key: string
+  name: string
+  /** 主色（真正拿去当 accent 的那个） */
+  accent: string
+  /** 色板预览：主色 + 深浅搭配，和壁纸取色出来的是一套思路 */
+  swatches: string[]
+}
+
+/** 自选配色的六个预设。名字走「物候」而不是「红黄蓝绿」，和书阁的纸感调子一致 */
+export const MONET_PRESETS: MonetPreset[] = [
+  { key: 'pine', name: '雾松', accent: '#4a6b5a', swatches: ['#2f5347', '#4a6b5a', '#7a9a86', '#cfdcd2', '#eef2ed'] },
+  { key: 'sea', name: '浅海', accent: '#2f6f8f', swatches: ['#1f4f68', '#2f6f8f', '#7fadc4', '#cfe0e9', '#edf4f7'] },
+  { key: 'iris', name: '鸢尾', accent: '#5b4a82', swatches: ['#3f3560', '#5b4a82', '#9a8fbd', '#ddd8ea', '#f2eff8'] },
+  { key: 'rouge', name: '胭脂', accent: '#8c3b3b', swatches: ['#6b2b2b', '#8c3b3b', '#c08080', '#e8cfcf', '#f7eeee'] },
+  { key: 'wheat', name: '麦穗', accent: '#7a6a2f', swatches: ['#5c4f22', '#7a6a2f', '#b0a269', '#e2dcc2', '#f5f2e6'] },
+  { key: 'graphite', name: '石墨', accent: '#3b4a5a', swatches: ['#2a3644', '#3b4a5a', '#7d8b9a', '#d3d9df', '#eef1f4'] },
+]
