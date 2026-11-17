@@ -2,6 +2,14 @@
 
 版本号按打包顺序递增，同一版本在同一天内可能多次重打。技术细节与踩坑见 [`docs/decisions.md`](docs/decisions.md)。
 
+## v1.14.1 · 2026-11-17（安全修复：恶意 EPUB 可执行脚本）
+
+按 anthropics/claude-code-security-review 的方法论做了一次安全审查，实测发现并修复一个高危问题：
+
+- **漏洞**：章节文档被序列化成同源 blob 交给阅读 iframe，而 iframe 的 sandbox 是 `allow-same-origin allow-scripts` 两项同时放开——等于没沙箱。书里带 `<script>` 的 EPUB（网上下的盗版书完全可能被塞这种东西）可以在 App 源执行任意脚本，读到 localStorage 里的 WebDAV 应用密码、书库索引，可外传。用一本带脚本的测试书实证：脚本成功执行并读出配置。
+- **修复**：文档在 DOMParser 阶段（惰性、不执行）就剥掉 `<script>`、`on*` 事件属性、`javascript:` 伪协议与 CSS expression，并在文档头注入 `script-src 'none'` 的 CSP meta 兜底。补丁带 `[shuge]` 注释，登记进 `src/vendor/foliate-js/PATCHES.md`。
+- **验证**：同一本恶意书打补丁后脚本不再执行、正文正常渲染；自检 33/33 PASS，插图、搜索、字体导入无回归。
+
 ## v1.14.0 · 2026-11-17（经典皮肤改文库风、排版对齐 readest）
 
 - **「经典」外观重做成轻小说文库式纸面**：淡紫纸底 + 细格纹（fixed 不跟滚动抖）、顶栏换衬线题字并加书徽方块与英文小字（SHUGE / READING ARCHIVE），小节眉标后接一条长线、线尾一颗紫点，分段控件从连体改散排胶囊。莫奈与液态玻璃两套外观机制不变——三套 UI 只换「面」，按钮与布局位置完全一致。强调色用 #6f6090（参考色的 #887AA5 压暗一档）：原色当文字压淡紫底只有 3.6:1，压暗后浅底 4.96:1、白字 5.58:1；深色下提亮为 #a394c5。
