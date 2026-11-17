@@ -29,6 +29,12 @@ export interface ReaderSettings {
   theme: ThemeKey
   fontSize: number
   lineHeight: number
+  /* [shuge] 字重：300 细 / 400 标准 / 500 中 / 700 粗（readest 的 fontWeight 对齐项） */
+  fontWeight: number
+  /* [shuge] 字间距，em（readest 的 letterSpacing 对齐项；0 为默认） */
+  letterSpacing: number
+  /* [shuge] 段间距，em（readest 的 paragraphMargin 对齐项；默认 0.35 与旧版视觉一致） */
+  paragraphMargin: number
   /** 左右边距，px */
   margin: number
   fontFamily: FontKey
@@ -58,6 +64,9 @@ const DEFAULTS: ReaderSettings = {
   theme: 'follow',
   fontSize: 18,
   lineHeight: 1.75,
+  fontWeight: 400,
+  letterSpacing: 0,
+  paragraphMargin: 0.35,
   margin: 24,
   fontFamily: 'serif',
   justify: true,
@@ -110,6 +119,14 @@ const migrate = (raw: Record<string, unknown>): Partial<ReaderSettings> => {
   if (typeof out.monetHex !== 'string' || !/^#[0-9a-f]{6}$/i.test(out.monetHex)) {
     out.monetHex = DEFAULTS.monetHex
   }
+  /* [shuge] 排版三项兜底：老存档没有这些字段；数值被写坏时退默认，不让正文排版炸掉 */
+  const num = (v: unknown, fallback: number, min: number, max: number): number => {
+    const n = Number(v)
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback
+  }
+  out.fontWeight = num(out.fontWeight, 400, 300, 700)
+  out.letterSpacing = num(out.letterSpacing, 0, 0, 0.2)
+  out.paragraphMargin = num(out.paragraphMargin, 0.35, 0, 1.5)
   return out as Partial<ReaderSettings>
 }
 
@@ -210,7 +227,7 @@ export const UI_STYLE_LABELS: Record<UiStyleKey, string> = {
 }
 
 export const UI_STYLE_NOTES: Record<UiStyleKey, string> = {
-  classic: '纸感底色，细边框，最省电',
+  classic: '文库纸面：淡紫底、衬线题字、细格纹',
   monet: '跟系统壁纸取色，整屏跟着变',
   glass: '半透明磨砂，浮层像一片玻璃',
 }

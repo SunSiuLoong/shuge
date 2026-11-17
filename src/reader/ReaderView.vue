@@ -4,6 +4,8 @@ import {
   ArrowLeft,
   Bookmark,
   BookmarkCheck,
+  ChevronLeft,
+  ChevronRight,
   List,
   MessageSquare,
   Search,
@@ -81,12 +83,17 @@ const persist = (info: RelocateInfo): void => {
   saveTimer = window.setTimeout(async () => {
     if (book.value?.id == null) return
     try {
+      // [shuge] 单页章节 foliate 的 fraction=(page-1)/(pages-2) 可能算出
+      // Infinity；clamp 到 0-1，避免脏数据进库后书架显示异常
+      const frac = Number.isFinite(info.fraction)
+        ? Math.min(1, Math.max(0, info.fraction))
+        : 0
       await saveProgress({
         bookId: book.value.id,
         cfi: info.cfi || undefined,
-        fraction: info.fraction,
+        fraction: frac,
         chapterIndex: info.chapterIndex,
-        percent: info.fraction,
+        percent: frac,
         chapterLabel: info.chapterLabel || undefined,
         updatedAt: Date.now(),
       })
@@ -285,6 +292,13 @@ const jumpToc = (item: TocItem): void => {
   void adapter.value?.goTo(item.href)
 }
 
+/** 菜单上的跳章箭头：滚动模式的点按不翻页，这是唯一显式跨章入口 */
+const jumpChapter = (dir: 1 | -1): void => {
+  bumpChrome()
+  if (dir > 0) void adapter.value?.nextChapter()
+  else void adapter.value?.prevChapter()
+}
+
 const goBack = (): void => {
   navigate('/')
 }
@@ -462,8 +476,14 @@ onBeforeUnmount(() => {
           />
         </div>
         <div class="rbar__meta">
+          <button class="rnav" type="button" aria-label="上一章" @click="jumpChapter(-1)">
+            <ChevronLeft :size="18" :stroke-width="1.7" />
+          </button>
           <span class="rbar__chapter">{{ chapterLabel || `第 ${chapterIndex + 1} 节` }}</span>
           <span class="rbar__percent">{{ percentText }}</span>
+          <button class="rnav" type="button" aria-label="下一章" @click="jumpChapter(1)">
+            <ChevronRight :size="18" :stroke-width="1.7" />
+          </button>
         </div>
         <div class="rbar__tools">
           <button class="rtool" type="button" @click="showToc = true; bumpChrome()">
@@ -484,6 +504,11 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </footer>
+    </Transition>
+
+    <!-- 目录：遮罩点按关闭目录，抽屉本体盖在遮罩上 -->
+    <Transition name="fade">
+      <div v-if="showToc" class="scrim" @click="showToc = false" />
     </Transition>
 
     <!-- 目录 -->
@@ -600,6 +625,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: stretch;
   gap: 2px;
+  /* 圆角与搜索/排版/书评 sheet 对齐（顶部两角，--radius-lg 随外观 14/24px） */
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   padding: 10px 16px calc(10px + var(--safe-bottom));
   border-top: 1px solid var(--line);
   box-shadow: 0 -1px 12px -6px rgba(0, 0, 0, 0.24);
@@ -689,7 +716,7 @@ onBeforeUnmount(() => {
 
 .rbar__meta {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 0 2px 6px;
@@ -697,7 +724,26 @@ onBeforeUnmount(() => {
   color: var(--text-2);
 }
 
+/* 跳章箭头：进度条两端下方，热区拉大 */
+.rnav {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 30px;
+  margin: -6px -8px;
+  border-radius: 999px;
+  color: var(--text);
+}
+
+.rnav:active {
+  background: var(--surface-2);
+}
+
 .rbar__chapter {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

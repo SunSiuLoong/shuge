@@ -231,12 +231,19 @@ export const applySnapshot = async (
     }
     const exist = await db.progress.where('bookId').equals(book.id).first()
     if (exist && (exist.updatedAt ?? 0) >= sp.updatedAt) continue
+    // [shuge] 同步快照可能混入 0-100 口径的旧数据（或 Infinity），写库前归一化
+    const norm = (raw: unknown): number => {
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) return 0
+      const v = raw > 1 ? raw / 100 : raw
+      return Math.min(1, Math.max(0, v))
+    }
+    const frac = norm(sp.fraction)
     await saveProgress({
       bookId: book.id,
       cfi: sp.cfi,
-      fraction: sp.fraction,
+      fraction: frac,
       chapterIndex: sp.chapterIndex,
-      percent: sp.percent,
+      percent: frac,
       chapterLabel: sp.chapterLabel,
       updatedAt: sp.updatedAt,
     })

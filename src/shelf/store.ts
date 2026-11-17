@@ -135,9 +135,17 @@ watch(tabBooks, (list) => {
   if (!list.length && shelfTab.value !== '__all__' && books.value.length) setShelfTab('__all__')
 })
 
+/** [shuge] 统一归一化 percent/fraction 口径：历史或同步链路可能混入 0-100
+ *  百分数，>1 一律除回去；非有限数（Infinity/NaN）归 0，clamp 到 0-1 */
+const normalizeFraction = (raw: unknown): number => {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return 0
+  const v = raw > 1 ? raw / 100 : raw
+  return Math.min(1, Math.max(0, v))
+}
+
 export const percentOf = (bookId?: number): number => {
   if (bookId == null) return 0
-  return progressMap.value[bookId]?.percent ?? 0
+  return normalizeFraction(progressMap.value[bookId]?.percent)
 }
 
 let started = false

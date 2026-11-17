@@ -21,8 +21,12 @@
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --dur: 200ms;
 
-  --safe-top: env(safe-area-inset-top, 0px);
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* [shuge] Android WebView 的 env(safe-area-inset-*) 恒为 0（尤其
+     targetSdk 35 强制 edge-to-edge 后）。Capacitor 8 SystemBars 会向
+     documentElement 注入 --safe-area-inset-* 真实值，var() 优先取注入值；
+     env() 兜底 iOS PWA / 桌面（两者皆 0 时不影响布局） */
+  --safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
 }
 
 /* App 明暗两套底：阅读配色（纸白/宣纸/护眼/夜读）只作用于阅读页，不在这里 */
@@ -44,8 +48,12 @@
   --line: rgba(0, 0, 0, 0.07);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 20px -12px rgba(0, 0, 0, 0.18);
   --scrim: rgba(28, 26, 23, 0.34);
-  --glass-bg: rgba(255, 255, 255, 0.62);
-  --glass-line: rgba(255, 255, 255, 0.7);
+  /* [shuge] 玻璃令牌：底色取自 --bg 而非纯白——纯白玻璃压在暖纸底上
+     会显成一条白带（书架顶栏/阅读页顶栏都踩过）。alpha 参考 Lumi_Books
+     的对比遮罩（neutral veil alpha 0.60）：透一点点但字仍可读 */
+  --glass-bg: color-mix(in srgb, var(--bg) 60%, transparent);
+  --glass-line: rgba(255, 255, 255, 0.55);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.35);
   --glass-shadow: 0 12px 40px -16px rgba(40, 32, 24, 0.32);
   color-scheme: light;
 }
@@ -66,16 +74,21 @@
   --line: rgba(255, 255, 255, 0.08);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 20px -12px rgba(0, 0, 0, 0.7);
   --scrim: rgba(0, 0, 0, 0.6);
-  --glass-bg: rgba(38, 42, 46, 0.62);
+  --glass-bg: color-mix(in srgb, var(--bg) 62%, transparent);
   --glass-line: rgba(255, 255, 255, 0.14);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   --glass-shadow: 0 12px 40px -16px rgba(0, 0, 0, 0.72);
   color-scheme: dark;
 }
 
-/* 没挂 data-scheme 前的兜底，避免首帧纯白闪一下 */
-:root {
-  --glass-bg: rgba(255, 255, 255, 0.62);
-  --glass-line: rgba(255, 255, 255, 0.7);
+/* 没挂 data-scheme 前的兜底，避免首帧纯白闪一下。
+   [shuge] 必须用 :not([data-scheme]) 限定：data-scheme 挂在 <html> 上，
+   裸 :root 与 [data-scheme='dark'] 同优先级且写在后面，会把暗色的
+   玻璃令牌覆盖成浅色值——暗色模式下顶栏/浮块全变白条白块 */
+html:not([data-scheme]) {
+  --glass-bg: color-mix(in srgb, #fbf9f4 60%, transparent);
+  --glass-line: rgba(255, 255, 255, 0.55);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.35);
   --glass-shadow: 0 12px 40px -16px rgba(40, 32, 24, 0.32);
 }
 
@@ -108,18 +121,193 @@
   background: var(--accent);
 }
 
-/* ============ UI 风格 2：液态玻璃 ============
-   半透明 + 大圆角 + 高光边。只改「面」不改「字」，对比度仍靠明暗两套文字色保证。 */
+/* ============ UI 风格 2：经典（轻小说文库式纸面） ============
+   [shuge] 参考「轻小说文库」的版面气质：淡紫纸底 + 细格纹、衬线题字、
+   白卡片细描边、小节眉标带长线。只换「面」，布局与控件位置三套 UI 一致。
+   accent #6f6090 是 #887AA5 压暗一档的结果：原色当文字压淡紫底只有 3.6:1，
+   压暗后浅底 4.96:1、白字 5.58:1，全部过 4.5 基线。 */
+[data-style='classic'] {
+  --radius: 8px;
+  --radius-lg: 18px;
+  --grid-line: rgba(111, 96, 144, 0.05);
+}
+
+[data-style='classic'][data-scheme='light'] {
+  --bg: #f4f0f7;
+  --bg-alt: #ece7f2;
+  --surface: #ffffff;
+  --surface-2: #f3eff7;
+  --accent: #6f6090;
+  --accent-soft: rgba(111, 96, 144, 0.12);
+  --line: rgba(60, 48, 90, 0.1);
+}
+
+[data-style='classic'][data-scheme='dark'] {
+  --bg: #161620;
+  --bg-alt: #1b1c26;
+  --surface: #1f202b;
+  --surface-2: #262836;
+  --accent: #a394c5;
+  --accent-soft: rgba(163, 148, 197, 0.16);
+  /* 深色下 accent 变亮（#a394c5 压 surface-2(#262836) 5.3:1），accent 底上的字换深字 */
+  --on-accent: #171526;
+  --line: rgba(255, 255, 255, 0.08);
+  --grid-line: rgba(163, 148, 197, 0.055);
+}
+
+/* 细格纹纸面：两条 1px 渐变线叠成方格，fixed 不跟滚动抖 */
+[data-style='classic'] body {
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 26px 26px;
+  background-attachment: fixed;
+}
+
+[data-style='classic'] .topbar {
+  background: transparent;
+}
+
+[data-style='classic'] .topbar.scrolled {
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+/* 顶栏标题统一衬线 + 字距（文库题字气质） */
+[data-style='classic'] .topbar__title {
+  font-family: var(--font-serif);
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+
+/* —— 品牌题字（书架顶栏专用）：默认藏，classic 露出 —— */
+.brand__mark,
+.brand__cap {
+  display: none;
+}
+
+.title--brand.title--brand {
+  display: flex;
+  align-items: center;
+}
+
+[data-style='classic'] .brand__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  margin-right: 10px;
+  border-radius: 8px;
+  background: var(--text);
+  color: var(--bg);
+  font-family: var(--font-serif);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* 标题与英文小字上下两行：text node + span 在列向 flex 里各占一行 */
+[data-style='classic'] .brand__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+[data-style='classic'] .brand__cap {
+  display: block;
+  font-family: var(--font-ui);
+  font-size: 8.5px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  line-height: 1;
+  margin-top: 3px;
+  color: var(--text-3);
+}
+
+/* —— 小节眉标：文字后接一条长线，线尾一颗紫点（文库分节样式）。
+   .eyebrow.eyebrow 双写类压过 SettingsView 的 scoped 定义 —— */
+[data-style='classic'] .eyebrow.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  color: var(--text-2);
+}
+
+[data-style='classic'] .eyebrow.eyebrow::after {
+  content: '';
+  flex: 1;
+  height: 8px;
+  background:
+    linear-gradient(var(--line), var(--line)) no-repeat center / 100% 1px,
+    radial-gradient(circle, var(--accent) 1.6px, transparent 1.8px) no-repeat right center / 6px 6px;
+}
+
+/* —— 分段控件：joined 底改散排胶囊，选中外圈 + 淡紫底 —— */
+[data-style='classic'] .seg.seg {
+  background: transparent;
+  padding: 0;
+  gap: 8px;
+}
+
+[data-style='classic'] .seg.seg .seg__item {
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  color: var(--text-2);
+}
+
+[data-style='classic'] .seg.seg .seg__item.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ============ UI 风格 2：液态玻璃（全局） ============
+   [shuge] 原实现只覆盖少数元素，三种外观几乎没区别。现在按社区实现
+   （liquid-glass-react / AndroidLiquidGlass 的典型参数：blur 20-30px +
+   saturate 180%、inset 1px 高光内描边、外阴影、底色 alpha >= 0.72）
+   全局铺开：面板浮层 / 顶栏标签 / 卡片控件 / 阅读页自有类全部玻璃化。
+   只改「面」不改「字」，对比度仍靠明暗两套文字色保证；
+   阅读页的玻璃色由 theme.ts readerVars 按当前阅读配色注入（--glass-*）。 */
 [data-style='glass'] {
   --radius: 12px;
   --radius-lg: 24px;
+  --glass-blur-bar: 22px;
+  --glass-blur-sheet: 30px;
+  --glass-saturate: 180%;
 }
 
+/* —— 面板/浮层组 —— */
+/* .sheet.sheet 双写类：部分组件（LinkSheet/BookMetaSheet）在 scoped 样式里
+   重定义了 .sheet 背景，同优先级下后注入的组件样式会赢，双写压过它 */
+[data-style='glass'] .sheet.sheet {
+  background: var(--glass-bg);
+  /* [shuge] 不写 -webkit-backdrop-filter：Chromium 把它当标准属性的别名，
+     后写的 -webkit- 值会覆盖前面的标准声明，且其 var() 形态解析失败
+     （parsedOk=False），整个 blur 直接失效变 none。Android WebView 144
+     原生支持标准属性，无需前缀 */
+  backdrop-filter: blur(var(--glass-blur-sheet)) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-line);
+  border-bottom: 0;
+  box-shadow: var(--glass-shadow), var(--glass-highlight);
+}
+
+[data-style='glass'] .sheet__handle {
+  background: color-mix(in srgb, var(--text) 26%, transparent);
+}
+
+[data-style='glass'] .importing {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur-sheet)) saturate(var(--glass-saturate));  border-color: var(--glass-line);
+  box-shadow: var(--glass-shadow), var(--glass-highlight);
+}
+
+/* —— 顶栏/标签组 —— */
 [data-style='glass'] .topbar {
   background: var(--glass-bg);
-  backdrop-filter: blur(22px) saturate(180%);
-  -webkit-backdrop-filter: blur(22px) saturate(180%);
-  border-bottom-color: transparent;
+  backdrop-filter: blur(var(--glass-blur-bar)) saturate(var(--glass-saturate));  border-bottom-color: transparent;
 }
 
 [data-style='glass'] .topbar.scrolled {
@@ -127,24 +315,16 @@
   box-shadow: 0 6px 24px -18px rgba(0, 0, 0, 0.5);
 }
 
-[data-style='glass'] .sheet {
-  background: var(--glass-bg);
-  backdrop-filter: blur(30px) saturate(180%);
-  -webkit-backdrop-filter: blur(30px) saturate(180%);
-  border: 1px solid var(--glass-line);
-  border-bottom: 0;
-  box-shadow: var(--glass-shadow);
+[data-style='glass'] .tab {
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  border-color: var(--glass-line);
 }
 
-[data-style='glass'] .sheet__handle {
-  background: color-mix(in srgb, var(--text) 26%, transparent);
+[data-style='glass'] .tab.is-active {
+  border-color: var(--accent);
 }
 
-[data-style='glass'] .icon-btn:active,
-[data-style='glass'] .rbtn:active {
-  background: color-mix(in srgb, var(--text) 12%, transparent);
-}
-
+/* —— 卡片/控件组 —— */
 [data-style='glass'] .card__cover {
   border-radius: 14px;
   box-shadow: var(--glass-shadow);
@@ -155,14 +335,56 @@
 [data-style='glass'] .field__input {
   background: color-mix(in srgb, var(--surface) 55%, transparent);
   border: 1px solid var(--glass-line);
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);}
+
+/* —— FAB/主按钮：外阴影 + 内描边高光 —— */
+[data-style='glass'] .fab,
+[data-style='glass'] .empty__btn {
+  box-shadow: var(--glass-shadow), var(--glass-highlight);
 }
 
-[data-style='glass'] .importing {
+/* [shuge] 书架底部统计浮块（.shelf__foot 悬浮化后跟随玻璃外观；
+   双写类名压过 ShelfView 的 scoped 背景） */
+[data-style='glass'] .shelf__foot.shelf__foot {
   background: var(--glass-bg);
-  backdrop-filter: blur(26px) saturate(180%);
-  border-color: var(--glass-line);
-  box-shadow: var(--glass-shadow);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-shadow), var(--glass-highlight);
+  backdrop-filter: blur(var(--glass-blur-bar)) saturate(var(--glass-saturate));
+}
+
+[data-style='glass'] .icon-btn:active,
+[data-style='glass'] .rbtn:active {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+/* —— 阅读页（自有类名；双写类名压过 ReaderView 的 scoped 样式） —— */
+[data-style='glass'] .rbar.rbar {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur-bar)) saturate(var(--glass-saturate));}
+
+/* [shuge] 目录抽屉（TocDrawer 自有类 .toc，不透明底 --bg）玻璃化 */
+[data-style='glass'] .toc.toc {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur-sheet)) saturate(var(--glass-saturate));  border-left: 1px solid var(--glass-line);
+}
+
+/* —— 降级：backdrop-filter 不支持时回退不透明色，杜绝「底白字灰」 —— */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  [data-style='glass'] .sheet.sheet,
+  [data-style='glass'] .topbar,
+  [data-style='glass'] .importing,
+  [data-style='glass'] .rbar.rbar,
+  [data-style='glass'] .toc.toc,
+  [data-style='glass'] .shelf__foot {
+    background: var(--surface);
+  }
+
+  [data-style='glass'] .chip,
+  [data-style='glass'] .stepper,
+  [data-style='glass'] .field__input,
+  [data-style='glass'] .tab {
+    background: var(--surface-2);
+  }
 }
 
 /* ============ 重置 ============ */
@@ -253,7 +475,9 @@ a {
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 48px;
+  /* 高度计入状态栏 inset：状态栏区域由 sticky 的背景色盖住，
+     内容（标题/按钮）始终落在状态栏下方 */
+  height: calc(48px + var(--safe-top));
   padding: var(--safe-top) 8px 0;
   /* 82% 半透明 + 模糊会让滚过去的正文从栏底透出半截字，看着像脏污；
      浮层要的是「干净地盖住」，不是「朦胧地透出」 */

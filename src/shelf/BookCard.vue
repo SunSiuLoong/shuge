@@ -19,6 +19,12 @@ const emit = defineEmits<{ (e: 'open', book: Book): void }>()
 
 const cover = computed(() => coverUrlOf(props.book))
 const pct = computed(() => Math.min(100, Math.max(0, Math.round(props.percent * 100))))
+// [shuge] 百分比文案：>0 但不足 1% 时四舍五入会变成 0，必须显式给「<1%」，
+// 否则刚读几页的书会显示「未开始」
+const pctLabel = computed(() => {
+  if (pct.value > 0 && pct.value < 1) return '<1%'
+  return `${pct.value}%`
+})
 const finished = computed(() => pct.value >= 99)
 
 /** 无封面时用书名首字占位，底色由书名哈希决定 */
@@ -56,7 +62,8 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
       <p class="card__title">{{ book.title }}</p>
       <p class="card__author-row">
         <span class="card__author">{{ book.author }}</span>
-        <span v-if="showPercent && pct > 0" class="card__pct">{{ pct }}%</span>
+        <!-- [shuge] 开关打开就常显：未开过的书显示「未开始」，保证有可见反馈 -->
+        <span v-if="showPercent" class="card__pct">{{ pct > 0 ? pctLabel : '未开始' }}</span>
       </p>
       <!-- 固定高度占位：标签有无都不能让同一排的进度条错位 -->
       <p class="card__tags" :class="{ 'is-empty': !visibleTags.length }">
@@ -125,10 +132,6 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
 
 .card--list .card__author-row {
   margin-top: 4px;
-}
-
-.card--list .card__tags {
-  display: none;
 }
 
 /* ---- 封面 ---- */
@@ -221,9 +224,9 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
   font-size: 13px;
   line-height: 1.4;
   font-weight: 500;
-  /* 固定两行高：书名长短不一时，同一排的作者名与进度条才不会错位。
-     -webkit-box 会吃掉 min-height，所以这里必须用 height */
-  height: 2.8em;
+  /* [shuge] 取消固定两行高（height:2.8em）：单行书名会空出一整行，
+     造成作者名与标签「离得远」的观感。改为自适应高度，超过两行
+     仍用 line-clamp 截断。代价是同一排卡片进度条不再绝对齐平 */
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -254,7 +257,7 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
   color: var(--text-3);
 }
 
-/* 标签行固定 16px 高：没有标签时用 visibility 留位，保证同一排进度条齐平 */
+/* 标签行：有标签时 16px 高；无标签时由 .is-empty 整行塌陷 */
 .card__tags {
   display: flex;
   gap: 4px;
@@ -263,8 +266,10 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
   overflow: hidden;
 }
 
+/* [shuge] 无标签时整行塌陷（原 visibility:hidden 恒占 16px，
+   在作者名与进度条之间拉出一条空带） */
 .card__tags.is-empty {
-  visibility: hidden;
+  display: none;
 }
 
 .card__tag {
@@ -301,7 +306,8 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
 }
 
 .card__progress.is-empty {
-  background: transparent;
+  /* [shuge] 未开过的书保留淡轨道：进度恒可见，而不是整条消失 */
+  background: color-mix(in srgb, var(--text) 10%, transparent);
 }
 
 .card__progress i {

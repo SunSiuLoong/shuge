@@ -11,6 +11,8 @@ import { Capacitor, registerPlugin } from '@capacitor/core'
  */
 interface SystemColorPlugin {
   getColors(): Promise<{ accent?: string; accent2?: string; accent3?: string }>
+  /** [shuge] 同步原生窗口背景（老 WebView 状态栏条的底色），见 SystemColorPlugin.java */
+  setWindowBackground(opts: { color: string }): Promise<void>
 }
 
 const SystemColor = registerPlugin<SystemColorPlugin>('SystemColor')
@@ -27,5 +29,16 @@ export const systemAccentHex = async (): Promise<string | null> => {
   } catch {
     // 系统低于 12、ROM 不支持、插件没注册，都在这里安静降级
     return null
+  }
+}
+
+/** [shuge] 把原生窗口背景刷成指定色；非原生环境或调用失败都安静降级 */
+export const setNativeWindowBackground = async (color: string): Promise<void> => {
+  if (!Capacitor.isNativePlatform()) return
+  if (!HEX.test(color)) return
+  try {
+    await SystemColor.setWindowBackground({ color })
+  } catch {
+    /* 插件未注册等场景，忽略 */
   }
 }

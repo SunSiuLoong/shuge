@@ -1,4 +1,4 @@
-import { resolveTheme, type FontKey, type ReaderSettings, type ResolvedTheme } from '../settings'
+import { resolveTheme, settings, type FontKey, type ReaderSettings, type ResolvedTheme } from '../settings'
 
 export interface ReaderPalette {
   bg: string
@@ -73,21 +73,43 @@ export const READER_PALETTES: Record<ResolvedTheme, ReaderPalette> = {
 }
 
 /** 阅读页根节点要覆盖的 CSS 变量，让顶栏/底栏/浮层跟着阅读配色走 */
-export const readerVars = (p: ReaderPalette): Record<string, string> => ({
-  '--bg': p.bg,
-  '--bg-alt': p.bg,
-  '--surface': p.surface,
-  '--surface-2': p.surface2,
-  '--text': p.text,
-  '--text-2': p.text2,
-  '--text-3': p.text3,
-  '--accent': p.accent,
-  '--accent-soft': p.accentSoft,
-  /* 夜读的 accent 偏亮，白字压上去只有 3.3:1，改用深字 */
-  '--on-accent': p.bg === '#16181a' ? '#14161a' : '#ffffff',
-  '--line': p.line,
-  '--scrim': p.scrim,
-})
+export const readerVars = (p: ReaderPalette): Record<string, string> => {
+  const vars: Record<string, string> = {
+    '--bg': p.bg,
+    '--bg-alt': p.bg,
+    '--surface': p.surface,
+    '--surface-2': p.surface2,
+    '--text': p.text,
+    '--text-2': p.text2,
+    '--text-3': p.text3,
+    '--accent': p.accent,
+    '--accent-soft': p.accentSoft,
+    /* 夜读的 accent 偏亮，白字压上去只有 3.3:1，改用深字 */
+    '--on-accent': p.bg === '#16181a' ? '#14161a' : '#ffffff',
+    '--line': p.line,
+    '--scrim': p.scrim,
+  }
+  /* [shuge] 液态玻璃外观下，阅读页的 --glass-* 必须跟着阅读配色走：
+     底色取 p.bg（同顶栏/正文同源，避免白玻璃压暖纸显成白带）；
+     alpha 参考 Lumi_Books 的对比遮罩（neutral veil 0.60）——透一点点，
+     靠 blur 保住文字可读性 */
+  if (settings.uiStyle === 'glass') {
+    const night = p.bg === '#16181a'
+    const alpha = night ? 62 : 60
+    vars['--glass-bg'] = `color-mix(in srgb, ${p.bg} ${alpha}%, transparent)`
+    vars['--glass-line'] = night ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.7)'
+    vars['--glass-highlight'] = night
+      ? 'inset 0 1px 0 rgba(255,255,255,0.08)'
+      : 'inset 0 1px 0 rgba(255,255,255,0.35)'
+    vars['--glass-shadow'] = night
+      ? '0 12px 40px -16px rgba(0,0,0,0.72)'
+      : '0 12px 40px -16px rgba(40,32,24,0.32)'
+    vars['--glass-blur-bar'] = '22px'
+    vars['--glass-blur-sheet'] = '30px'
+    vars['--glass-saturate'] = '180%'
+  }
+  return vars
+}
 
 /** 字体文件绝对地址：注入到 iframe 的 CSS 里必须用绝对 URL */
 const fontUrl = (): string => {
@@ -170,6 +192,10 @@ export const buildReaderCSS = (s: ReaderSettings, custom?: CustomFontRef | null)
       color: ${p.text} !important;
       font-family: ${family} !important;
       line-height: ${s.lineHeight} !important;
+      /* [shuge] 字重/字间距（readest fontWeight / letterSpacing 对齐项）。
+         内置宋体只有 400 一档，其他档位交给浏览器合成加粗/减淡 */
+      font-weight: ${s.fontWeight} !important;
+      letter-spacing: ${s.letterSpacing}em !important;
       text-rendering: optimizeLegibility;
       -webkit-font-smoothing: antialiased;
     }
@@ -177,13 +203,16 @@ export const buildReaderCSS = (s: ReaderSettings, custom?: CustomFontRef | null)
     p, li, dd, dt, blockquote, td, th {
       font-family: ${family} !important;
       line-height: ${s.lineHeight} !important;
+      font-weight: ${s.fontWeight} !important;
+      letter-spacing: ${s.letterSpacing}em !important;
       color: ${p.text} !important;
     }
 
     p {
       font-size: 1em !important;
       text-indent: ${indent} !important;
-      margin: 0 0 0.35em !important;
+      /* [shuge] 段间距（readest paragraphMargin 对齐项），旧版固定 0.35em */
+      margin: 0 0 ${s.paragraphMargin}em !important;
       text-align: ${align} !important;
       text-justify: inter-ideograph;
       hanging-punctuation: allow-end last;

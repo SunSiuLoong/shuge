@@ -10,8 +10,9 @@ export const LATEST_RELEASE_API = `https://api.github.com/repos/${REPO_OWNER}/${
 
 /** 爱发电主页：填了就会在关于页出现入口，留空则显示「暂未开放」 */
 export const AFDIAN_URL = 'https://ifdian.net/a/shuge-reader'
-/** 打赏码图片：放到 public/ 下再写相对路径，例如 'donate.png' */
-export const DONATE_IMAGE = ''
+/** 打赏码图片：Vite 资源导入，构建时带内容哈希，任何 base 路径下都能显示 */
+import donateImage from './assets/reward-qrcode.png'
+export const DONATE_IMAGE = donateImage
 
 export const LICENSE_NAME = 'MIT'
 

@@ -1,5 +1,7 @@
 package com.sunbo.shuge;
 
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
 
 import com.getcapacitor.JSObject;
@@ -36,5 +38,26 @@ public class SystemColorPlugin extends Plugin {
             ret.put("accent3", colorOf(android.R.color.system_accent3_200));
         }
         call.resolve(ret);
+    }
+
+    /**
+     * [shuge] 同步 Activity 窗口背景色。老 WebView（<140）走 SystemBars 的
+     * 原生 padding 路径时，状态栏区域露出的是窗口背景（capacitor.config
+     * 里静态的 #FBF9F4），暗色主题下会是一条刺眼的白边——前端在主题/路由
+     * 变化时调这个方法，把窗口背景刷成当前页面的底色。新 WebView 的
+     * passthrough 路径看不到窗口背景，调了也无害。
+     */
+    @PluginMethod
+    public void setWindowBackground(PluginCall call) {
+        String color = call.getString("color");
+        getActivity().runOnUiThread(() -> {
+            try {
+                getActivity().getWindow()
+                    .setBackgroundDrawable(new ColorDrawable(Color.parseColor(color)));
+            } catch (Exception ignored) {
+                // 颜色串非法就保持原样
+            }
+        });
+        call.resolve();
     }
 }

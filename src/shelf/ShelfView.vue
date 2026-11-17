@@ -124,7 +124,15 @@ onMounted(() => {
 <template>
   <div class="shelf">
     <header class="topbar" :class="{ scrolled }">
-      <h1 class="topbar__title">书阁</h1>
+      <!-- [shuge] 文库式品牌题字：书徽 + 标题 + 英文小字。装饰元素，
+           只有 classic 风格在 CSS 里露出，monet/glass 下隐藏；按钮位置不动 -->
+      <h1 class="topbar__title title--brand">
+        <span class="brand__mark" aria-hidden="true">书</span>
+        <span class="brand__text">
+          书阁
+          <span class="brand__cap">SHUGE / READING ARCHIVE</span>
+        </span>
+      </h1>
       <button class="icon-btn" type="button" aria-label="排序" @click="showSort = true">
         <ArrowUpDown :size="19" :stroke-width="1.6" />
       </button>
@@ -444,7 +452,8 @@ onMounted(() => {
   gap: 6px;
   overflow-x: auto;
   overscroll-behavior-x: contain;
-  padding: 0 18px 10px;
+  /* [shuge] 顶部加 6px：与 topbar 之间留出缓冲，胶囊不再顶进标题行 */
+  padding: 6px 18px 10px;
   scrollbar-width: none;
 }
 
@@ -455,7 +464,9 @@ onMounted(() => {
 .tab {
   flex: none;
   display: inline-flex;
-  align-items: baseline;
+  /* [shuge] baseline 对齐会让单行内容停靠在交叉轴起点，文字顶在胶囊上沿；
+     改中心线对齐，标签名在胶囊里垂直居中 */
+  align-items: center;
   gap: 5px;
   min-height: 40px;
   padding: 0 13px;
@@ -479,9 +490,14 @@ onMounted(() => {
   font-weight: 600;
 }
 
+.tab__label {
+  line-height: 1;
+}
+
 .tab__count {
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
+  line-height: 1;
   /* 计数比标题淡一档，但不能再浅：11px 的字对比度必须过 4.5 */
   color: var(--text-2);
 }
@@ -538,12 +554,22 @@ onMounted(() => {
 }
 
 .shelf__foot {
-  padding: 28px 0 12px;
-  text-align: center;
+  /* 悬浮在屏幕左下的小浮块：原先是文档流里排在所有书后面的统计行，
+     书多了要滚很久才能看到；FAB 在右下，浮块放左下避让 */
+  position: fixed;
+  left: 16px;
+  bottom: calc(16px + var(--safe-bottom));
+  z-index: 20;
+  padding: 7px 14px;
+  border-radius: 999px;
   font-size: 11.5px;
   color: var(--text-2);
   letter-spacing: 0.04em;
-  transition: opacity 180ms var(--ease);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-card);
+  transition: opacity 180ms var(--ease), background-color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
 }
 
 /* 导入结果提示条浮在底部时会正好压在统计行上，先把统计淡出 */

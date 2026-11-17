@@ -16,6 +16,22 @@ import {
 const themes = Object.keys(THEME_LABELS) as ThemeKey[]
 const lineSteps = [1.5, 1.65, 1.75, 1.9, 2.05]
 const margins = [12, 20, 28, 36]
+/* [shuge] 字重/字距/段距的可选档（readest 对齐项） */
+const weightSteps = [
+  { value: 300, label: '细' },
+  { value: 400, label: '标准' },
+  { value: 500, label: '中' },
+  { value: 700, label: '粗' },
+]
+const spacingSteps = [0, 0.02, 0.05, 0.1]
+const paraSteps = [0, 0.35, 0.7, 1.05]
+
+const paraLabel = (v: number): string => {
+  if (v === 0) return '紧凑'
+  if (v === 0.35) return '标准'
+  if (v === 0.7) return '宽'
+  return '特宽'
+}
 
 const fontInput = ref<HTMLInputElement | null>(null)
 const fontMsg = ref('')
@@ -129,6 +145,55 @@ onMounted(() => {
             @click="pickLine(v)"
           >
             {{ v.toFixed(2) }}
+          </button>
+        </div>
+      </div>
+
+      <!-- [shuge] 字重/字距/段距：readest 排版面板的对齐项 -->
+      <div class="row">
+        <span class="row__label">字重</span>
+        <div class="row__value">
+          <button
+            v-for="w in weightSteps"
+            :key="w.value"
+            type="button"
+            class="chip"
+            :class="{ 'is-active': settings.fontWeight === w.value }"
+            @click="settings.fontWeight = w.value"
+          >
+            {{ w.label }}
+          </button>
+        </div>
+      </div>
+
+      <div class="row">
+        <span class="row__label">字距</span>
+        <div class="row__value">
+          <button
+            v-for="v in spacingSteps"
+            :key="v"
+            type="button"
+            class="chip"
+            :class="{ 'is-active': Math.abs(settings.letterSpacing - v) < 0.005 }"
+            @click="settings.letterSpacing = v"
+          >
+            {{ v === 0 ? '默认' : `${v}em` }}
+          </button>
+        </div>
+      </div>
+
+      <div class="row">
+        <span class="row__label">段距</span>
+        <div class="row__value">
+          <button
+            v-for="v in paraSteps"
+            :key="v"
+            type="button"
+            class="chip"
+            :class="{ 'is-active': Math.abs(settings.paragraphMargin - v) < 0.02 }"
+            @click="settings.paragraphMargin = v"
+          >
+            {{ paraLabel(v) }}
           </button>
         </div>
       </div>
