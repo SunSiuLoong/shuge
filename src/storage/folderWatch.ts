@@ -2,6 +2,7 @@ import { db } from '../db'
 import { settings } from '../settings'
 import { isNative } from '../native'
 import { importItems } from '../importer/importer'
+import type { ImportResult } from '../importer/importer'
 import { readRefFileNative, scanNativeFolder, forgetNativeFolder, hasNativeFolder } from './refs'
 import type { ScannedFile } from './refs'
 
@@ -79,6 +80,8 @@ export interface ImportSummary {
   added: number
   duplicate: number
   failed: number
+  /** 逐本明细：导入结果弹窗要按书名和原因列失败项 */
+  results: ImportResult[]
 }
 
 /**
@@ -87,22 +90,30 @@ export interface ImportSummary {
  * 而且逐本走能让书架的 liveQuery 边导边刷新。
  */
 export const importScanned = async (files: ScannedFile[]): Promise<ImportSummary> => {
-  const out: ImportSummary = { added: 0, duplicate: 0, failed: 0 }
+  const out: ImportSummary = { added: 0, duplicate: 0, failed: 0, results: [] }
   for (const f of files) {
     if (f.size > MAX_BYTES) {
       out.failed += 1
+      // 超限的书没进 importItems，明细行自己补一条，弹窗里才说得清是哪本
+      out.results.push({ name: f.name, status: 'failed', reason: '文件超过 300MB，已跳过' })
       continue
     }
     try {
       const file = await readRefFileNative(f.uri, f.name)
       const results = await importItems([{ file, ref: { refUri: f.uri } }])
       for (const r of results) {
+        out.results.push(r)
         if (r.status === 'added') out.added += 1
         else if (r.status === 'duplicate') out.duplicate += 1
         else out.failed += 1
       }
-    } catch {
+    } catch (e) {
       out.failed += 1
+      out.results.push({
+        name: f.name,
+        status: 'failed',
+        reason: e instanceof Error ? e.message : '读取原文件失败',
+      })
     }
   }
   return out
@@ -121,27 +132,32 @@ let running = false
 
 /**
  * 自动导入：仅在「开了自动导入 + 已选过文件夹 + 原生环境」时工作。
- * 静默执行，任何异常都不打扰用户（文件夹被删、授权失效等只记在结果里）。
+ * 任何异常都不打扰用户（文件夹被删、授权失效等只记在结果里）。
+ *
+ * 返回值：本次真的导入了才返回汇总（含 0 本成功、N 本失败的情况），
+ * 没开 / 被节流 / 没有新书 / 出错都返回 null——调用方据此决定要不要给提示。
  */
-export const autoImportFromFolder = async (): Promise<void> => {
-  if (!isNative || !settings.folderAutoImport || !settings.folderName) return
-  if (running) return
+export const autoImportFromFolder = async (): Promise<ImportSummary | null> => {
+  if (!isNative || !settings.folderAutoImport || !settings.folderName) return null
+  if (running) return null
   // 回前台可能连续触发几次，5 分钟内只扫一次
-  if (Date.now() - lastRun < 5 * 60 * 1000) return
+  if (Date.now() - lastRun < 5 * 60 * 1000) return null
   /* 关键：先问原生有没有保存的授权。只看 settings.folderName 不够——
      App 重装 / 清数据后 JS 侧还留着旧名字，但原生授权没了，
      这时 scan() 会拉起目录选择器，用户一开 App 就被弹窗糊脸。 */
-  if (!(await hasNativeFolder().catch(() => false))) return
+  if (!(await hasNativeFolder().catch(() => false))) return null
   lastRun = Date.now()
   running = true
   try {
     const { fresh } = await scanWatched()
-    if (!fresh.length) return
+    if (!fresh.length) return null
     const batch = fresh.slice(0, MAX_AUTO_PER_RUN)
     const r = await importScanned(batch)
     reportAuto(r.added, r.failed)
+    return r
   } catch {
     /* 授权失效 / 文件夹被删：静默跳过，用户下次手动扫描时会重新弹选择器 */
+    return null
   } finally {
     running = false
   }

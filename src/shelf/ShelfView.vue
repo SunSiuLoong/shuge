@@ -17,6 +17,7 @@ import type { Book } from '../types'
 import { navigate } from '../router'
 import { importItems, importState, removeBook } from '../importer/importer'
 import type { ImportItem } from '../importer/importer'
+import { buildImportReport } from '../importer/report'
 import { formatBytes } from '../storage/opfs'
 import { isNative as isNativeApp } from '../native'
 import {
@@ -50,6 +51,7 @@ import CoverSheet from './CoverSheet.vue'
 import BatchTagSheet from './BatchTagSheet.vue'
 import LinkSheet from '../links/LinkSheet.vue'
 import ConfirmDialog from '../ui/ConfirmDialog.vue'
+import InfoDialog from '../ui/InfoDialog.vue'
 import { useSwipe } from '../ui/swipe'
 import PromptDialog from '../ui/PromptDialog.vue'
 import { openInApp } from '../links/inapp'
@@ -67,6 +69,15 @@ const metaBook = ref<Book | null>(null)
 const coverBook = ref<Book | null>(null)
 const editBook = ref<Book | null>(null)
 const summary = ref<string | null>(null)
+
+/** 导入结果弹窗：条数、失败明细、引用说明 */
+const importReport = ref<{
+  title: string
+  lines: string[]
+  details: string[]
+  noteTitle: string
+  note: string
+} | null>(null)
 
 /** 批量管理：进去以后点卡片是勾选，不是开书 */
 const selecting = ref(false)
@@ -130,21 +141,8 @@ const pickByRef = async (): Promise<void> => {
   }
 }
 
-const finishImport = async (
-  items: { file: File; ref?: { refKey?: string; refUri?: string } }[],
-): Promise<void> => {
-  const results = await importItems(items)
-  const added = results.filter((r) => r.status === 'added').length
-  const dup = results.filter((r) => r.status === 'duplicate').length
-  const failed = results.filter((r) => r.status === 'failed').length
-  const parts = [`导入 ${added} 本`]
-  if (dup) parts.push(`${dup} 本重复已跳过`)
-  if (failed) {
-    const first = results.find((r) => r.status === 'failed')
-    parts.push(`${failed} 本失败${first?.reason ? `：${first.reason}` : ''}`)
-  }
-  // 失败原因要留得住，别 4 秒就没了
-  toast(parts.join('，'), failed ? 9000 : 4000)
+const finishImport = async (items: ImportItem[]): Promise<void> => {
+  importReport.value = buildImportReport(await importItems(items))
 }
 
 const onPicked = async (e: Event): Promise<void> => {
@@ -962,6 +960,19 @@ onMounted(() => {
     <!-- 结果提示 -->
     <Transition name="fade">
       <div v-if="summary" class="toast">{{ summary }}</div>
+    </Transition>
+
+    <!-- 导入结果弹窗：toast 一闪而过，条数多、带失败原因时读不完，这里停下来让用户看清 -->
+    <Transition name="fade">
+      <InfoDialog
+        v-if="importReport"
+        :title="importReport.title"
+        :lines="importReport.lines"
+        :details="importReport.details"
+        :note-title="importReport.noteTitle"
+        :note="importReport.note"
+        @close="importReport = null"
+      />
     </Transition>
 
     <!-- 书籍操作 -->

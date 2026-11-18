@@ -29,6 +29,8 @@ import { useSwipe } from '../ui/swipe'
 import { isNative } from '../native'
 import { formatBytes } from '../storage/opfs'
 import { changeWatchedFolder, importScanned, scanWatched } from '../storage/folderWatch'
+import { buildImportReport, type ImportReport } from '../importer/report'
+import InfoDialog from '../ui/InfoDialog.vue'
 import type { ScannedFile } from '../storage/refs'
 
 const imageInput = ref<HTMLInputElement | null>(null)
@@ -42,6 +44,8 @@ const picked = ref<string[]>([])
 const scanBusy = ref(false)
 const scanMsg = ref('')
 const importMsg = ref('')
+/** 扫描导入的结果弹窗（与书架导入同一套文案） */
+const importReport = ref<ImportReport | null>(null)
 
 const fmtTime = (ts: number): string => {
   if (!ts) return ''
@@ -86,6 +90,7 @@ const importPicked = async (): Promise<void> => {
     if (r.duplicate) parts.push(`${r.duplicate} 本重复已跳过`)
     if (r.failed) parts.push(`${r.failed} 本失败`)
     importMsg.value = parts.join('，')
+    importReport.value = buildImportReport(r.results)
     // 导完重扫一遍：列表里只剩真正没进库的
     const again = await scanWatched()
     scanAll.value = again.all.length
@@ -639,6 +644,19 @@ onMounted(syncApplied)
     </div>
 
     <input ref="imageInput" class="hidden" type="file" accept="image/*" @change="onImage" />
+
+    <!-- 扫描导入的结果：和书架加号导入用同一个弹窗，文案一致 -->
+    <Transition name="fade">
+      <InfoDialog
+        v-if="importReport"
+        :title="importReport.title"
+        :lines="importReport.lines"
+        :details="importReport.details"
+        :note-title="importReport.noteTitle"
+        :note="importReport.note"
+        @close="importReport = null"
+      />
+    </Transition>
   </div>
 </template>
 

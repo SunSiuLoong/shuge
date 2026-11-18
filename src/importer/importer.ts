@@ -11,6 +11,8 @@ export interface ImportResult {
   status: 'added' | 'duplicate' | 'failed'
   reason?: string
   bookId?: number
+  /** 成功入库且是「引用原文件」登记（没复制进书库），导入结果弹窗要按它区分文案 */
+  ref?: boolean
 }
 
 export interface ImportState {
@@ -128,7 +130,12 @@ export const importItems = async (items: ImportItem[]): Promise<ImportResult[]> 
           addedAt: Date.now(),
         }
         const bookId = await db.books.add(record)
-        results.push({ name: file.name, status: 'added', bookId: bookId as number })
+        results.push({
+          name: file.name,
+          status: 'added',
+          bookId: bookId as number,
+          ref: Boolean(item.ref),
+        })
         // 后台排队去匹配评分站，不等它——导入不应该被网络拖慢
         enqueueAutoLink(bookId as number)
       } catch (err) {

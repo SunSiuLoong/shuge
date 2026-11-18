@@ -11,6 +11,7 @@ import { applyUpdate, initPWA, needRefresh, offlineReady } from './pwa'
 import { initUiStyle } from './ui/style'
 import InAppBrowser from './links/InAppBrowser.vue'
 import { autoImportFromFolder } from './storage/folderWatch'
+import { noticeText, notify } from './ui/notice'
 
 // UI 风格（莫奈取色 / 液态玻璃）的副作用挂在这里，只在 App 挂载一次
 initUiStyle()
@@ -35,6 +36,25 @@ const reconcile = async (): Promise<void> => {
   }
 }
 
+/**
+ * 跑一次文件夹自动导入，成功后给个顶部浮条回执。
+ * 只在书架 / 设置页提示：阅读页正在沉浸看书，底部或顶部突然冒一条很扫兴，
+ * 而这两页正好是用户能立刻看到新书的地方（设置页还有扫描文件夹卡片）。
+ */
+const runAutoImport = async (): Promise<void> => {
+  const r = await autoImportFromFolder()
+  if (!r || (!r.added && !r.failed)) return
+  const page = route.value.name
+  if (page !== 'shelf' && page !== 'settings') return
+  // 全失败也要说一声：多半是原文件坏了 / 授权失效，用户得知道去重扫
+  const msg = r.added
+    ? r.failed
+      ? `已自动导入 ${r.added} 本，${r.failed} 本失败`
+      : `已自动导入 ${r.added} 本新书`
+    : `${r.failed} 本自动导入失败，可到设置里重扫`
+  notify(msg)
+}
+
 onMounted(() => {
   initPWA()
   void requestPersist()
@@ -42,9 +62,9 @@ onMounted(() => {
   /* [shuge] 文件夹自动导入：安卓没有后台文件监听，只能在启动后补扫一次
      （延后 4 秒，让首屏和索引先跑完），另外切回前台时再补一次。
      内部有 5 分钟节流与开关判断，没开就不会动。 */
-  window.setTimeout(() => void autoImportFromFolder(), 4000)
+  window.setTimeout(() => void runAutoImport(), 4000)
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') void autoImportFromFolder()
+    if (document.visibilityState === 'visible') void runAutoImport()
   })
 })
 </script>
@@ -68,6 +88,11 @@ onMounted(() => {
 
   <Transition name="fade">
     <div v-if="offlineReady" class="sw-toast sw-toast--plain">已可离线阅读</div>
+  </Transition>
+
+  <!-- 后台自动导入的回执：顶部浮条，几秒后自消，不拦操作 -->
+  <Transition name="drop">
+    <div v-if="noticeText" class="notice" role="status">{{ noticeText }}</div>
   </Transition>
 
   <!-- 网页端的内置浏览器（安卓走 Custom Tabs，不需要这一层） -->
@@ -98,4 +123,37 @@ onMounted(() => {
   color: #16181a;
   background: rgba(230, 227, 220, 0.92);
 }
+
+/* 自动导入回执：走顶部，和书架的底部 toast 错开；配色用 text/bg 反转，
+   浅色下是深底浅字、深色下是浅底深字，两套外观都跟得上 */
+.notice {
+  position: fixed;
+  top: calc(10px + var(--safe-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 95;
+  max-width: calc(100% - 28px);
+  padding: 9px 16px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--bg);
+  background: var(--text);
+  box-shadow: 0 10px 28px -12px rgba(0, 0, 0, 0.45);
+}
+
+.drop-enter-active,
+.drop-leave-active {
+  transition: opacity 180ms var(--ease), transform 220ms var(--ease);
+}
+
+.drop-enter-from,
+.drop-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-10px);
+}
+
 </style>
