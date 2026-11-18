@@ -765,6 +765,47 @@ class Resources {
     }
 }
 
+/**
+ * [shuge] 安全补丁：剥掉书里的活动内容。
+ *
+ * 章节文档会被序列化成 **同源 blob** 交给 iframe，而 iframe 的 sandbox 是
+ * `allow-same-origin allow-scripts`（foliate 上游为了 WebKit 事件 bug 必须这么写）。
+ * 两者同时放开等于没沙箱：书里的脚本能直接读到 App 源的 localStorage
+ * （`shuge.webdav.v1` 里存着 WebDAV 应用密码）、IndexedDB 与 OPFS。
+ * 实测一本带 <script> 的 epub 就能把密码读出来。
+ *
+ * 这里处理的 doc 来自 DOMParser，是惰性文档，脚本不会执行，所以可以安全清洗；
+ * 清洗后再序列化。另在文档头塞一条 CSP 兜底（script-src 'none'），
+ * 防止有从 SVG/内联属性漏过来的路径。
+ */
+const stripActiveContent = doc => {
+    const ns = doc.documentElement?.namespaceURI
+    // 1) 脚本元素
+    for (const el of doc.querySelectorAll('script')) el.remove()
+    // 2) on* 事件属性、javascript: 伪协议
+    for (const el of doc.querySelectorAll('*')) {
+        for (const attr of [...el.attributes]) {
+            const name = attr.name.toLowerCase()
+            const value = attr.value.trim()
+            if (name.startsWith('on')) el.removeAttribute(attr.name)
+            else if (/^(href|src|xlink:href|formaction|action)$/.test(name)
+                && /^\s*javascript:/i.test(value)) el.removeAttribute(attr.name)
+            else if (name === 'style' && /expression\s*\(|javascript:/i.test(value)) {
+                el.removeAttribute(attr.name)
+            }
+        }
+    }
+    // 3) CSP 兜底：只在有 <head> 的 HTML/XHTML 文档里有意义，SVG 跳过
+    const head = doc.head ?? doc.querySelector('head')
+    if (head && ns) {
+        const meta = doc.createElementNS(ns, 'meta')
+        meta.setAttribute('http-equiv', 'Content-Security-Policy')
+        meta.setAttribute('content', "script-src 'none'; object-src 'none'")
+        head.insertBefore(meta, head.firstChild)
+    }
+    return doc
+}
+
 class Loader {
     #cache = new Map()
     #children = new Map()
@@ -896,6 +937,8 @@ class Loader {
                 item.mediaType = MIME.HTML
                 doc = new DOMParser().parseFromString(str, item.mediaType)
             }
+            // [shuge] 安全：先剥活动内容再往下走（详见 stripActiveContent 注释）
+            doc = stripActiveContent(doc)
             // [shuge] 老工具常把 viewBox/preserveAspectRatio 写成全小写。XML 属性大小写敏感，
             // 失效后内嵌 <image> 按原始像素渲染，封面/插图被裁。这里做一次大小写归一化。
             for (const el of doc.querySelectorAll('svg')) {

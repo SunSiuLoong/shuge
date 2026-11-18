@@ -1,4 +1,5 @@
 import { Capacitor, registerPlugin } from '@capacitor/core'
+import type { PluginListenerHandle } from '@capacitor/core'
 
 /**
  * 系统动态色（Android 12+ 的 Material You / 莫奈取色）。
@@ -13,9 +14,15 @@ interface SystemColorPlugin {
   getColors(): Promise<{ accent?: string; accent2?: string; accent3?: string }>
   /** [shuge] 同步原生窗口背景（老 WebView 状态栏条的底色），见 SystemColorPlugin.java */
   setWindowBackground(opts: { color: string }): Promise<void>
+  /** [shuge] 读系统明暗（uiMode 的 NIGHT_MASK）。WebView 的 matchMedia 在部分 ROM 不可靠 */
+  getDarkMode(): Promise<{ dark: boolean }>
+  addListener(
+    eventName: 'systemDarkChanged',
+    listenerFunc: (data: { dark: boolean }) => void,
+  ): Promise<PluginListenerHandle>
 }
 
-const SystemColor = registerPlugin<SystemColorPlugin>('SystemColor')
+export const SystemColor = registerPlugin<SystemColorPlugin>('SystemColor')
 
 const HEX = /^#[0-9a-f]{6}$/i
 

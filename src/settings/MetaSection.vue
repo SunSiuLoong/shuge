@@ -107,9 +107,7 @@ const chooseSource = (key: RatingSource): void => {
 </script>
 
 <template>
-  <section class="group">
-    <p class="group__title">标签与评分</p>
-
+  <div class="subsec">
     <div class="line">
       <span>已打标签</span>
       <span class="line__value">{{ taggedCount }} / {{ totalCount }}</span>
@@ -202,20 +200,12 @@ const chooseSource = (key: RatingSource): void => {
       只取这些字段，<strong>不抓短评、不抓评论正文</strong>。评分站都不提供分类字段，
       所以「类型」显示的是本地提取的题材。先按评分人数挑站，人数一样才比匹配度。
     </p>
-  </section>
+  </div>
 </template>
 
 <style scoped>
-.group {
-  padding: 18px 0 6px;
-  border-bottom: 1px solid var(--line);
-}
-
-.group__title {
-  margin: 0 0 10px;
-  font-size: 12px;
-  letter-spacing: 0.1em;
-  color: var(--text-3);
+.subsec {
+  padding: 2px 0 4px;
 }
 
 .line {

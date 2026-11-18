@@ -1,8 +1,13 @@
-/** 目录条目：扁平存储，depth 表示层级（0 起），避免递归类型带来的工具链问题 */
+/**
+ * 目录条目。
+ * depth 是层级（0 起）；children 是下级的卷/章（有下级时目录可以展开收起）。
+ * 书库里存的 toc 是扁平版（只看 depth），阅读页用 adapter.getToc() 的树版。
+ */
 export interface TocItem {
   label: string
   href: string
   depth: number
+  children?: TocItem[]
 }
 
 /** 能给出评分的站点。加新源时这里的联合类型与 meta/sources.ts 的注册表要一起改 */
@@ -61,6 +66,17 @@ export interface Book {
   toc?: TocItem[]
   chapterCount: number
   opfsPath: string
+  /** 书文件来源：'opfs' = 复制入库（默认），'ref' = 引用原文件（不复制，静读天下式） */
+  source?: 'opfs' | 'ref'
+  /**
+   * 引用模式的寻址方式：
+   * - 桌面（File System Access API）：refKey 是 IndexedDB handles 表的主键，值是 FileSystemFileHandle
+   * - 安卓（SAF）：refKey 为空，refUri 是拿过持久授权的 content:// uri
+   */
+  refKey?: string
+  refUri?: string
+  /** 引用模式下的原文件名（删除/失效提示与同步显示用） */
+  refName?: string
   addedAt: number
   lastOpenedAt?: number
   /** 文件丢失标记（启动对账时置位） */
@@ -77,6 +93,12 @@ export interface Book {
   link?: BookLink
   /** 元数据最近补全时间 */
   metaUpdatedAt?: number
+  /**
+   * 仅本书生效的字体（值同 settings.FontKey，如 'serif' / 'custom:xxx'）。
+   * 空 = 跟随全局设置。参考 Readest 的「Global Settings 关掉后只存到当前书」，
+   * 以及 KOReader 把字体默认为 per-book 作用域的做法。
+   */
+  readerFont?: string
   sourceRefs?: SourceRef[]
   groups?: number[]
 }

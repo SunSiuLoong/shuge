@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Minus, Plus, X } from 'lucide-vue-next'
-import { settings, THEME_LABELS, type ThemeKey } from '../settings'
+import { settings, THEME_LABELS, type FontKey, type ThemeKey } from '../settings'
+import { patchBook } from '../db'
+import type { Book } from '../types'
 import { READER_PALETTES } from './theme'
 import {
   customFonts,
@@ -12,6 +14,9 @@ import {
   removeFont,
   type FontMeta,
 } from './fonts'
+
+const props = defineProps<{ book?: Book }>()
+const emit = defineEmits<{ (e: 'book-font', key?: string): void }>()
 
 const themes = Object.keys(THEME_LABELS) as ThemeKey[]
 const lineSteps = [1.5, 1.65, 1.75, 1.9, 2.05]
@@ -37,6 +42,60 @@ const fontInput = ref<HTMLInputElement | null>(null)
 const fontMsg = ref('')
 const fontBusy = ref(false)
 
+/**
+ * 字体应用范围（参考 Readest 的 Global Settings 开关 / KOReader 的 per-book 作用域）：
+ * - all  = 写全局设置，所有书跟着变
+ * - book = 只写当前书的 readerFont，别的书不动
+ * 当前书已有单独字体时默认停在 book，打开面板就能看到「这本跟别人不一样」。
+ */
+const bookFont = ref<string | undefined>(props.book?.readerFont)
+const scope = ref<'all' | 'book'>(props.book?.readerFont ? 'book' : 'all')
+
+/** 字体选择器当前高亮的那一项 */
+const activeFont = computed<FontKey>(
+  () => ((scope.value === 'book' ? (bookFont.value as FontKey | undefined) : undefined) ??
+    settings.fontFamily) as FontKey,
+)
+
+const fontLabel = (key: string): string => {
+  if (key === 'serif') return '宋体'
+  if (key === 'sans') return '黑体'
+  const id = key.startsWith('custom:') ? key.slice('custom:'.length) : ''
+  return customFonts.value.find((f) => f.id === id)?.name ?? '自定义字体'
+}
+
+/** 选字体：按当前范围决定写全局还是写这一本 */
+const pickFont = async (key: FontKey): Promise<void> => {
+  if (scope.value === 'book' && props.book?.id != null) {
+    bookFont.value = key
+    await patchBook(props.book.id, { readerFont: key })
+    emit('book-font', key)
+    return
+  }
+  settings.fontFamily = key
+  // 全局模式选了字体，就把这本书的单独覆盖撤掉，否则改了看不到变化
+  if (bookFont.value && props.book?.id != null) {
+    bookFont.value = undefined
+    await patchBook(props.book.id, { readerFont: undefined })
+    emit('book-font', undefined)
+  }
+}
+
+const setScope = async (next: 'all' | 'book'): Promise<void> => {
+  if (next === scope.value || props.book?.id == null) return
+  scope.value = next
+  if (next === 'book') {
+    const key = settings.fontFamily
+    bookFont.value = key
+    await patchBook(props.book.id, { readerFont: key })
+    emit('book-font', key)
+  } else if (bookFont.value) {
+    bookFont.value = undefined
+    await patchBook(props.book.id, { readerFont: undefined })
+    emit('book-font', undefined)
+  }
+}
+
 /** 色块只负责展示配色，名字放到下方标签里 —— 文字压在半明半暗的色块上
  *  总要靠描边硬撑，五个色块风格也不统一。 */
 const swatchStyle = (key: ThemeKey): Record<string, string> => {
@@ -60,7 +119,7 @@ const cycleMargin = (): void => {
   settings.margin = next ?? margins[0]
 }
 
-const pickFont = (): void => fontInput.value?.click()
+const pickFontInput = (): void => fontInput.value?.click()
 
 const onFontPicked = async (e: Event): Promise<void> => {
   const input = e.target as HTMLInputElement
@@ -71,7 +130,7 @@ const onFontPicked = async (e: Event): Promise<void> => {
   fontMsg.value = '正在读取字体…'
   try {
     const meta = await importFont(file)
-    settings.fontFamily = `custom:${meta.id}`
+    await pickFont(`custom:${meta.id}`)
     fontMsg.value = `已导入「${meta.name}」（${formatFontSize(meta.size)}）`
   } catch (err) {
     fontMsg.value =
@@ -85,7 +144,13 @@ const onFontPicked = async (e: Event): Promise<void> => {
 }
 
 const dropFont = async (f: FontMeta): Promise<void> => {
-  if (settings.fontFamily === `custom:${f.id}`) settings.fontFamily = 'serif'
+  const key = `custom:${f.id}`
+  if (settings.fontFamily === key) settings.fontFamily = 'serif'
+  if (bookFont.value === key) {
+    bookFont.value = 'serif'
+    if (props.book?.id != null) await patchBook(props.book.id, { readerFont: 'serif' })
+    emit('book-font', 'serif')
+  }
   await removeFont(f.id)
   fontMsg.value = `已删除「${f.name}」`
   window.setTimeout(() => (fontMsg.value = ''), 3000)
@@ -212,17 +277,17 @@ onMounted(() => {
         <div class="row__value fonts">
           <button
             class="chip"
-            :class="{ 'is-active': settings.fontFamily === 'serif' }"
+            :class="{ 'is-active': activeFont === 'serif' }"
             type="button"
-            @click="settings.fontFamily = 'serif'"
+            @click="pickFont('serif')"
           >
             宋体
           </button>
           <button
             class="chip"
-            :class="{ 'is-active': settings.fontFamily === 'sans' }"
+            :class="{ 'is-active': activeFont === 'sans' }"
             type="button"
-            @click="settings.fontFamily = 'sans'"
+            @click="pickFont('sans')"
           >
             黑体
           </button>
@@ -230,14 +295,14 @@ onMounted(() => {
             v-for="f in customFonts"
             :key="f.id"
             class="fontchip"
-            :class="{ 'is-active': settings.fontFamily === `custom:${f.id}` }"
+            :class="{ 'is-active': activeFont === `custom:${f.id}` }"
           >
             <button
               class="fontchip__pick"
               type="button"
               :style="{ fontFamily: fontCssOf(f) }"
               :title="`${f.name} · ${formatFontSize(f.size)}`"
-              @click="settings.fontFamily = `custom:${f.id}`"
+              @click="pickFont(`custom:${f.id}`)"
             >
               {{ f.name }}
             </button>
@@ -250,12 +315,40 @@ onMounted(() => {
               <X :size="12" :stroke-width="2.4" />
             </button>
           </span>
-          <button class="chip chip--ghost" type="button" :disabled="fontBusy" @click="pickFont">
+          <button class="chip chip--ghost" type="button" :disabled="fontBusy" @click="pickFontInput">
             <Plus :size="13" :stroke-width="2.2" />
             导入字体
           </button>
         </div>
       </div>
+
+      <!-- 应用范围：决定上面选的字体写全局还是只写这一本 -->
+      <div class="row">
+        <span class="row__label">应用范围</span>
+        <div class="row__value">
+          <button
+            class="chip"
+            :class="{ 'is-active': scope === 'all' }"
+            type="button"
+            @click="setScope('all')"
+          >
+            所有书籍
+          </button>
+          <button
+            class="chip"
+            :class="{ 'is-active': scope === 'book' }"
+            type="button"
+            :disabled="!book"
+            @click="setScope('book')"
+          >
+            仅本书
+          </button>
+        </div>
+      </div>
+      <p v-if="scope === 'book'" class="fontmsg">
+        本书单独用「{{ fontLabel(activeFont) }}」，其它书仍按全局设置。
+      </p>
+
       <p v-if="fontMsg" class="fontmsg">{{ fontMsg }}</p>
       <p v-else class="fontmsg fontmsg--hint">
         支持 ttf / otf / woff / woff2，字体存在本机，随书库一起，不上传。

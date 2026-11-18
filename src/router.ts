@@ -3,7 +3,8 @@ import { ref } from 'vue'
 export type Route =
   | { name: 'shelf' }
   | { name: 'reader'; id: number }
-  | { name: 'settings' }
+  /** section 是设置页二级分类（theme/shelf/sync/meta/about），空表示分类列表 */
+  | { name: 'settings'; section?: string }
   | { name: 'about' }
 
 const parse = (): Route => {
@@ -11,7 +12,10 @@ const parse = (): Route => {
   const read = raw.match(/^\/read\/(\d+)/)
   if (read) return { name: 'reader', id: Number(read[1]) }
   if (raw.startsWith('/about')) return { name: 'about' }
-  if (raw.startsWith('/settings')) return { name: 'settings' }
+  if (raw.startsWith('/settings')) {
+    const sub = raw.match(/^\/settings\/([a-z]+)/)
+    return { name: 'settings', section: sub?.[1] }
+  }
   return { name: 'shelf' }
 }
 

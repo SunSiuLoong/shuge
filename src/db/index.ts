@@ -1,12 +1,19 @@
 import Dexie, { type Table } from 'dexie'
 import type { Book, Bookmark, Group, Progress, StoredFont } from '../types'
 
+/** 引用模式存的文件句柄（FileSystemFileHandle 可结构化克隆，Dexie 直接存） */
+export interface StoredHandle {
+  id: string
+  handle: unknown
+}
+
 export class ReaderDB extends Dexie {
   books!: Table<Book, number>
   progress!: Table<Progress, number>
   bookmarks!: Table<Bookmark, number>
   groups!: Table<Group, number>
   fonts!: Table<StoredFont, string>
+  handles!: Table<StoredHandle, string>
 
   constructor() {
     super('shuge-reader')
@@ -23,6 +30,15 @@ export class ReaderDB extends Dexie {
       bookmarks: '++id, bookId, [bookId+cfi], createdAt',
       groups: '++id, name, order',
       fonts: '&id, addedAt',
+    })
+    // v3：引用模式（不复制原文件）的桌面文件句柄
+    this.version(3).stores({
+      books: '++id, title, author, addedAt, lastOpenedAt, fingerprint, *tags, rating',
+      progress: '++id, &bookId, updatedAt',
+      bookmarks: '++id, bookId, [bookId+cfi], createdAt',
+      groups: '++id, name, order',
+      fonts: '&id, addedAt',
+      handles: '&id',
     })
   }
 }
@@ -93,7 +109,10 @@ export const addBookmark = (b: Bookmark): Promise<number> => db.bookmarks.add(b)
 export const removeBookmark = (id: number): Promise<void> => db.bookmarks.delete(id)
 
 export const deleteBook = async (id: number): Promise<void> => {
-  await db.transaction('rw', [db.books, db.progress, db.bookmarks], async () => {
+  await db.transaction('rw', [db.books, db.progress, db.bookmarks, db.handles], async () => {
+    // 引用模式的书在 handles 表里存着句柄，不删就永久堆积（每本书一条）
+    const book = await db.books.get(id)
+    if (book?.refKey) await db.handles.delete(book.refKey)
     await db.books.delete(id)
     await db.progress.where('bookId').equals(id).delete()
     await db.bookmarks.where('bookId').equals(id).delete()

@@ -59,6 +59,15 @@ export const putBookFile = async (fileName: string, file: File): Promise<string>
 export const deleteBookFile = (fileName: string): Promise<void> =>
   rpc<void>({ type: 'delete', name: fileName })
 
+/** 删书时保留本地文件：把书文件挪进回收站，启动对账不会再把它当孤儿删掉 */
+export const moveBookFileToTrash = (fileName: string): Promise<void> =>
+  rpc<void>({ type: 'trash', name: fileName })
+
+export const listTrashFiles = (): Promise<{ name: string; size: number }[]> =>
+  rpc<{ name: string; size: number }[]>({ type: 'listTrash' })
+
+export const clearTrash = (): Promise<number> => rpc<number>({ type: 'clearTrash' })
+
 export const getBookFile = async (fileName: string): Promise<File | null> => {
   try {
     const dir = await booksDir(false)

@@ -31,7 +31,17 @@ export const resyncMonet = (): void => {
   void syncMonet()
 }
 
+/** 液态玻璃的通透度：设置里存「透明度」(10-90)，CSS 用「实底占比」= 100 - 透明度 */
+const syncGlass = (): void => {
+  document.documentElement.style.setProperty(
+    '--glass-solid',
+    String(100 - settings.glassOpacity),
+  )
+}
+
 export const initUiStyle = (): void => {
+  watch(() => settings.glassOpacity, syncGlass, { immediate: true })
+
   watch(
     [() => settings.uiStyle, () => settings.monetSource, () => settings.monetHex],
     () => {

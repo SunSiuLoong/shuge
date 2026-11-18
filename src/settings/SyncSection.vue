@@ -53,9 +53,7 @@ const onSync = (): Promise<void> =>
 </script>
 
 <template>
-  <section class="group">
-    <p class="group__title">同步（WebDAV）</p>
-
+  <div class="subsec">
     <div class="presets">
       <button
         v-for="p in presets"
@@ -164,20 +162,12 @@ const onSync = (): Promise<void> =>
       localStorage，坚果云请用「应用密码」而不是登录密码。在浏览器里打开时直连会被
       CORS 拦，需要填中继地址；装成 App 则走系统原生请求，不用中继。
     </p>
-  </section>
+  </div>
 </template>
 
 <style scoped>
-.group {
-  padding: 18px 0 6px;
-  border-bottom: 1px solid var(--line);
-}
-
-.group__title {
-  margin: 0 0 10px;
-  font-size: 12px;
-  letter-spacing: 0.1em;
-  color: var(--text-3);
+.subsec {
+  padding: 2px 0 4px;
 }
 
 .field {

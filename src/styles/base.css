@@ -51,7 +51,11 @@
   /* [shuge] 玻璃令牌：底色取自 --bg 而非纯白——纯白玻璃压在暖纸底上
      会显成一条白带（书架顶栏/阅读页顶栏都踩过）。alpha 参考 Lumi_Books
      的对比遮罩（neutral veil alpha 0.60）：透一点点但字仍可读 */
-  --glass-bg: color-mix(in srgb, var(--bg) 60%, transparent);
+  --glass-bg: color-mix(
+    in srgb,
+    var(--bg) calc(var(--glass-solid, 60) * 1%),
+    transparent
+  );
   --glass-line: rgba(255, 255, 255, 0.55);
   --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.35);
   --glass-shadow: 0 12px 40px -16px rgba(40, 32, 24, 0.32);
@@ -74,7 +78,11 @@
   --line: rgba(255, 255, 255, 0.08);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 20px -12px rgba(0, 0, 0, 0.7);
   --scrim: rgba(0, 0, 0, 0.6);
-  --glass-bg: color-mix(in srgb, var(--bg) 62%, transparent);
+  --glass-bg: color-mix(
+    in srgb,
+    var(--bg) calc(var(--glass-solid, 62) * 1%),
+    transparent
+  );
   --glass-line: rgba(255, 255, 255, 0.14);
   --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   --glass-shadow: 0 12px 40px -16px rgba(0, 0, 0, 0.72);
@@ -86,39 +94,89 @@
    裸 :root 与 [data-scheme='dark'] 同优先级且写在后面，会把暗色的
    玻璃令牌覆盖成浅色值——暗色模式下顶栏/浮块全变白条白块 */
 html:not([data-scheme]) {
-  --glass-bg: color-mix(in srgb, #fbf9f4 60%, transparent);
+  --glass-bg: color-mix(
+    in srgb,
+    #fbf9f4 calc(var(--glass-solid, 60) * 1%),
+    transparent
+  );
   --glass-line: rgba(255, 255, 255, 0.55);
   --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.35);
   --glass-shadow: 0 12px 40px -16px rgba(40, 32, 24, 0.32);
 }
 
-/* ============ UI 风格 1：莫奈取色 ============
-   --accent / --accent-soft / --monet-wash 由 src/ui/monet.ts 按当前书封算出来写进
-   documentElement.style；这里只定义「取色后整屏怎么用」。 */
+/* ============ UI 风格 1：原生（MD3 / Material You） ============
+   [shuge] 按 MD3 baseline 规范重做：颜色角色由 monet.ts 的 md3Roles 从取色源
+   生成并映射到 App 令牌（--bg/--surface/--text/--accent…），这里只负责
+   「元素怎么用角色」——表面容器、圆角形状、控件状态层。
+   参考 Material 3 / M3 Expressive：大圆角 16-28、胶囊控件、tonal surface、
+   选中态用 secondary-container 而非 primary 实色。 */
+[data-style='monet'] {
+  --radius: 10px;
+  --radius-lg: 20px;
+}
+
 [data-style='monet'] body {
   background-image: var(--monet-wash, none);
   background-attachment: fixed;
   background-size: cover;
 }
 
-/* 莫奈在深色下 accent 会更亮（不然压不住深底），这时白字就糊了，改用近黑字 */
+/* 深色下 accent 更亮，accent 底上的字换深字 */
 [data-style='monet'][data-scheme='dark'] {
   --on-accent: #10130e;
 }
 
+/* 顶栏：surface 容器半透明 + 轻模糊，滚动后加描边（M3 top app bar） */
 [data-style='monet'] .topbar {
-  background: color-mix(in srgb, var(--bg) 78%, transparent);
-  backdrop-filter: blur(14px) saturate(150%);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  backdrop-filter: blur(16px) saturate(140%);
 }
 
-[data-style='monet'] .card__cover,
-[data-style='monet'] .empty__btn,
-[data-style='monet'] .fab {
+[data-style='monet'] .topbar__title {
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+/* 卡片封面阴影染一点主色 */
+[data-style='monet'] .card__cover {
   box-shadow: 0 12px 30px -16px var(--accent);
 }
 
-[data-style='monet'] .chip.is-active {
-  background: var(--accent);
+/* 选中态统一走 secondary-container（M3 filter chip / nav 的选中面） */
+[data-style='monet'] .chip.is-active,
+[data-style='monet'] .seg.seg .seg__item.is-active,
+[data-style='monet'] .seg__item.is-active {
+  background: var(--md-secondary-container, var(--accent-soft));
+  color: var(--md-on-secondary-container, var(--text));
+  border-color: transparent;
+  font-weight: 600;
+}
+
+/* 标签页选中：secondary-container 胶囊 */
+[data-style='monet'] .tab {
+  border-color: var(--line);
+}
+
+[data-style='monet'] .tab.is-active {
+  background: var(--md-secondary-container, var(--accent));
+  color: var(--md-on-secondary-container, var(--on-accent));
+  border-color: transparent;
+}
+
+/* FAB 用 primary-container + on-primary-container（M3 FAB baseline） */
+[data-style='monet'] .fab,
+[data-style='monet'] .empty__btn {
+  --fab-bg: var(--md-primary-container, var(--accent));
+  --fab-fg: var(--md-on-primary-container, var(--on-accent));
+  --fab-line: transparent;
+  --fab-shadow: 0 10px 26px -12px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* 顶栏工具浮块：primary 8% 淡染 */
+[data-style='monet'] .topbar__tools {
+  --tools-bg: color-mix(in srgb, var(--accent) 10%, transparent);
+  --tools-line: transparent;
+  --tools-shadow: 0 6px 18px -12px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 /* ============ UI 风格 2：经典（轻小说文库式纸面） ============
@@ -279,6 +337,123 @@ html:not([data-scheme]) {
   --glass-saturate: 180%;
 }
 
+/* ============ 书架顶栏工具浮块 ============
+   排序/设置两个按钮共用一块「面」，随外观换质地：
+   经典=纸面小浮块（白面细描边微投影），莫奈=主色淡染，玻璃=磨砂玻璃。
+   ShelfView 的 scoped 样式只管布局。 */
+.topbar__tools {
+  --tools-bg: var(--surface);
+  --tools-line: var(--line);
+  --tools-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  --tools-blur: none;
+}
+
+[data-scheme='dark'] .topbar__tools {
+  --tools-shadow: none;
+}
+
+[data-style='glass'] .topbar__tools {
+  --tools-bg: var(--glass-bg);
+  --tools-line: var(--glass-line);
+  --tools-shadow: var(--glass-shadow), var(--glass-highlight);
+  --tools-blur: blur(var(--glass-blur-bar)) saturate(var(--glass-saturate));
+}
+
+/* 玻璃下书名用衬线；原生（MD3）走系统无衬线，不加 */
+[data-style='glass'] .title--brand.title--brand {
+  font-family: var(--font-serif);
+  letter-spacing: 0.08em;
+}
+
+/* 标签页随外观：极简用衬线小签（文库分卷气质） */
+[data-style='classic'] .tab .tab__label {
+  font-family: var(--font-serif);
+  font-size: 13.5px;
+  letter-spacing: 0.02em;
+}
+
+/* ============ 混合方案：玻璃外观书架容器化 ============
+   经典（默认）不加浮块——参考轻小说阅读器的纸面简洁；
+   莫奈只给选中标签实心主色 + 顶栏工具淡染。
+   玻璃下设置页卡片仍走容器玻璃；书架网格卡特殊：玻璃只裹封面，
+   文字直接落在页面上——整块裹会把矩形拉得又高又空，比例失衡，
+   Lumi_Books 的做法就是玻璃面=封面本身（圆角 16dp + 大投影）。 */
+
+[data-style='glass'] .card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur-bar)) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-shadow), var(--glass-highlight);
+}
+
+[data-style='glass'] .shelf .grid .card {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+[data-style='glass'] .shelf__foot {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur-bar)) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-line);
+  border-radius: 999px;
+  padding: 6px 14px;
+  box-shadow: var(--glass-shadow), var(--glass-highlight);
+}
+
+[data-style='glass'] .tab {
+  background: var(--glass-bg);
+  backdrop-filter: blur(10px) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-line);
+}
+
+[data-style='glass'] .tab.is-active {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* 莫奈书卡保持与经典一致的白卡（用户选择：莫奈不动书卡，只保留选中标签实心） */
+
+/* ============ 主操作按钮（书架 FAB / 空态导入）============
+   面随外观走，ShelfView 的 scoped 样式只管布局，颜色阴影全走这里的令牌：
+   经典=文库纸面圆钮（白面 + 强调色图标 + 细描边），莫奈=实心主色，
+   玻璃=半透主色 + 磨砂 + 高光内描边。 */
+.fab,
+.empty__btn {
+  --fab-bg: var(--accent);
+  --fab-fg: var(--on-accent);
+  --fab-line: transparent;
+  --fab-shadow: 0 8px 22px -10px color-mix(in srgb, var(--accent) 58%, transparent);
+  --fab-blur: none;
+}
+
+[data-style='classic'] .fab,
+[data-style='classic'] .empty__btn {
+  --fab-bg: var(--surface);
+  --fab-fg: var(--accent);
+  --fab-line: color-mix(in srgb, var(--accent) 42%, transparent);
+  --fab-shadow: 0 6px 18px -10px color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+[data-style='glass'] .fab,
+[data-style='glass'] .empty__btn {
+  --fab-bg: color-mix(in srgb, var(--accent) 85%, transparent);
+  --fab-fg: var(--on-accent);
+  --fab-line: var(--glass-line);
+  --fab-shadow: var(--glass-shadow), var(--glass-highlight);
+  --fab-blur: blur(16px) saturate(var(--glass-saturate));
+}
+
+/* 降级：backdrop-filter 不支持时玻璃 FAB 回退实心，图标仍可读 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  [data-style='glass'] .fab,
+  [data-style='glass'] .empty__btn {
+    --fab-bg: var(--accent);
+    --fab-blur: none;
+  }
+}
+
 /* —— 面板/浮层组 —— */
 /* .sheet.sheet 双写类：部分组件（LinkSheet/BookMetaSheet）在 scoped 样式里
    重定义了 .sheet 背景，同优先级下后注入的组件样式会赢，双写压过它 */
@@ -326,8 +501,10 @@ html:not([data-scheme]) {
 
 /* —— 卡片/控件组 —— */
 [data-style='glass'] .card__cover {
-  border-radius: 14px;
+  border-radius: 16px;
   box-shadow: var(--glass-shadow);
+  outline: 1px solid var(--glass-line);
+  outline-offset: -1px;
 }
 
 [data-style='glass'] .chip,
@@ -336,12 +513,6 @@ html:not([data-scheme]) {
   background: color-mix(in srgb, var(--surface) 55%, transparent);
   border: 1px solid var(--glass-line);
   backdrop-filter: blur(10px);}
-
-/* —— FAB/主按钮：外阴影 + 内描边高光 —— */
-[data-style='glass'] .fab,
-[data-style='glass'] .empty__btn {
-  box-shadow: var(--glass-shadow), var(--glass-highlight);
-}
 
 /* [shuge] 书架底部统计浮块（.shelf__foot 悬浮化后跟随玻璃外观；
    双写类名压过 ShelfView 的 scoped 背景） */
@@ -609,4 +780,55 @@ a {
 .slide-down-enter-from,
 .slide-down-leave-to {
   transform: translateY(100%);
+}
+
+/* ---- 页面级转场（书架 ⇄ 阅读页 / 设置）----
+   出去只淡出（快，不挡路），进来淡入 + 96% 轻缩放上浮，
+   是「进入一层」的纵深感，不是硬切。参数参考 Lumi_Books 的
+   打开书过渡（Compose animatedContent 220ms + scale） */
+.page-enter-active {
+  transition: opacity 220ms var(--ease), transform 220ms var(--ease);
+}
+
+.page-leave-active {
+  transition: opacity 130ms var(--ease);
+}
+
+.page-enter-from {
+  opacity: 0;
+  transform: scale(0.96);
+}
+
+.page-leave-to {
+  opacity: 0;
+}
+
+/* 设置页两级之间的滑动转场（方向由 SettingsView 按前进/后退给名字） */
+.setfwd-enter-active,
+.setfwd-leave-active,
+.setback-enter-active,
+.setback-leave-active {
+  transition: opacity 190ms var(--ease), transform 190ms var(--ease);
+}
+
+/* 前进：新页从右侧滑入，旧页向左让位 */
+.setfwd-enter-from {
+  opacity: 0;
+  transform: translateX(28px);
+}
+
+.setfwd-leave-to {
+  opacity: 0;
+  transform: translateX(-16px);
+}
+
+/* 后退：镜像 */
+.setback-enter-from {
+  opacity: 0;
+  transform: translateX(-28px);
+}
+
+.setback-leave-to {
+  opacity: 0;
+  transform: translateX(16px);
 }

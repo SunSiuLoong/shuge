@@ -16,13 +16,20 @@ export interface NovelSite {
   key: string
   name: string
   note: string
+  /**
+   * 网页端能否放进内置浏览层（iframe）。
+   * 2026-11-17 实测响应头：豆瓣、微信读书没有 X-Frame-Options / frame-ancestors；
+   * 番茄的 CSP 写了 frame-ancestors 'self' *.feishu.cn，起点返回 202 挑战页。
+   * 这两个标 false，网页端直接交给系统浏览器，安卓 App 不受影响（走 Custom Tabs）。
+   */
+  embed?: boolean
 }
 
 export const SITES: NovelSite[] = [
   { key: 'weread', name: '微信读书', note: '正版，有书评和读者想法' },
   { key: 'douban', name: '豆瓣读书', note: '评分与短评，冷门书也有' },
-  { key: 'fanqie', name: '番茄小说', note: '免费正版，网文最全' },
-  { key: 'qidian', name: '起点读书', note: '评论区最热闹' },
+  { key: 'fanqie', name: '番茄小说', note: '免费正版，网文最全', embed: false },
+  { key: 'qidian', name: '起点读书', note: '评论区最热闹', embed: false },
 ]
 
 // cleanTitle 挪到 meta/title.ts：导入时洗书名和搜索时洗书名是同一套规则

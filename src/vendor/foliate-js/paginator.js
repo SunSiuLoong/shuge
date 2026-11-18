@@ -177,6 +177,8 @@ const setSelectionTo = (target, collapse) => {
 
 const getDirection = doc => {
     const { defaultView } = doc
+    // [shuge] 关书转场时文档可能已被拆掉，body/视图拿不到就按默认横排处理
+    if (!doc.body || !doc.documentElement || !defaultView) return { vertical: false, rtl: false }
     const { writingMode, direction } = defaultView.getComputedStyle(doc.body)
     const vertical = writingMode === 'vertical-rl'
         || writingMode === 'vertical-lr'
@@ -187,6 +189,8 @@ const getDirection = doc => {
 }
 
 const getBackground = doc => {
+    // [shuge] 同上：文档已卸载时直接返回空，别让转场页脚本报错
+    if (!doc?.body || !doc.defaultView) return ''
     const bodyStyle = doc.defaultView.getComputedStyle(doc.body)
     return bodyStyle.backgroundColor === 'rgba(0, 0, 0, 0)'
         && bodyStyle.backgroundImage === 'none'
@@ -244,7 +248,9 @@ class View {
         })
         // `allow-scripts` is needed for events because of WebKit bug
         // https://bugs.webkit.org/show_bug.cgi?id=218086
-        this.#iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts')
+        // [shuge] allowfullscreen：EPUB 3.3 允许书里带 <video>，controls 的全屏按钮
+        // 没有这个权限会静默失败（点全屏无反应），不是编解码问题
+        this.#iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allowfullscreen')
         this.#iframe.setAttribute('scrolling', 'no')
     }
     get element() {
@@ -348,8 +354,17 @@ class View {
         // [shuge] 同上：文档已卸载时 body 为 null，直接跳过
         if (!doc?.body) return
         for (const el of doc.body.querySelectorAll('img, svg, video')) {
-            // preserve max size if they are already set
-            const { maxHeight, maxWidth } = doc.defaultView.getComputedStyle(el)
+            // [shuge] 关书转场瞬间 iframe 可能已被拆除：旧文档的元素还在
+            // 遍历列表里，但 doc.defaultView 已销毁，getComputedStyle 会抛
+            // 「parameter 1 is not of type 'Element'」。文档一死就整体放弃。
+            if (!el.isConnected) continue
+            let style
+            try {
+                style = doc.defaultView.getComputedStyle(el)
+            } catch {
+                return
+            }
+            const { maxHeight, maxWidth } = style
             setStylesImportant(el, {
                 'max-height': vertical
                     ? (maxHeight !== 'none' && maxHeight !== '0px' ? maxHeight : '100%')
@@ -446,6 +461,12 @@ export class Paginator extends HTMLElement {
     #anchor = 0 // anchor view to a fraction (0-1), Range, or Element
     #justAnchored = false
     #locked = false // while true, prevent any further navigation
+    // [shuge] 滚动模式连续多视图：sectionIndex → View。
+    // 相邻章节预载进同一个滚动容器，两章内容像一章一样无缝滚动；
+    // 分页模式仍保持单视图（一次只有一章）。算法参考 readest 的 foliate-js fork。
+    #views = new Map()
+    #primaryIndex = -1
+    #filling = false // 正在预载相邻章节（期间抑制 onExpand 重定位）
     #styles
     #styleMap = new WeakMap()
     #mediaQuery = matchMedia('(prefers-color-scheme: dark)')
@@ -561,11 +582,26 @@ export class Paginator extends HTMLElement {
         this.#footer = this.#root.getElementById('footer')
 
         this.#observer.observe(this.#container)
-        this.#container.addEventListener('scroll', () => this.dispatchEvent(new Event('scroll')))
+        this.#container.addEventListener('scroll', () => {
+            this.dispatchEvent(new Event('scroll'))
+            // [shuge] 连续滚动：接近已加载内容边缘时立即预载相邻章节，
+            // 不等 debounce（手指拖动中跳过——主线程加载会掉帧；松手后的
+            // 收尾滚动会再次触发）。#preloadNext 自带 #filling 防重入。
+            if (this.scrolled && !this.#filling && !this.#touchScrolled
+                && this.#view && this.size > 0
+                && (this.#renderedViewSize - this.end < this.size * 3
+                    || this.start < this.size * 2))
+                void this.#preloadNext()
+        })
         this.#container.addEventListener('scroll', debounce(() => {
             if (this.scrolled) {
-                if (this.#justAnchored) this.#justAnchored = false
-                else this.#afterScroll('scroll')
+                // [shuge] 程序化跳转（跨章/跳章/定位）落地后的第一个滚动事件
+                // 只用于重置状态，不再触发 relocate（写进度/更新锚点）
+                if (this.#justAnchored) {
+                    this.#justAnchored = false
+                    return
+                }
+                this.#afterScroll('scroll')
             }
         }, 250))
 
@@ -633,6 +669,20 @@ export class Paginator extends HTMLElement {
     attributeChangedCallback(name, _, value) {
         switch (name) {
             case 'flow':
+                // [shuge] 模式切换：滚动→分页收缩回单视图；分页→滚动把当前
+                // 视图登记进多视图表并立即补齐相邻章节
+                if (this.#view) {
+                    if (value !== 'scrolled') {
+                        for (const [i, v] of [...this.#views])
+                            if (v !== this.#view) this.#destroyView(i)
+                        this.#views.clear()
+                        this.#primaryIndex = this.#index
+                    } else {
+                        this.#views.set(this.#index, this.#view)
+                        this.#primaryIndex = this.#index
+                        void this.#preloadNext()
+                    }
+                }
                 this.render()
                 break
             case 'gap':
@@ -758,10 +808,14 @@ export class Paginator extends HTMLElement {
     }
     render() {
         if (!this.#view) return
-        this.#view.render(this.#beforeRender({
+        const layout = this.#beforeRender({
             vertical: this.#vertical,
             rtl: this.#rtl,
-        }))
+        })
+        // [shuge] 滚动模式重排所有已加载视图；分页模式仍只有单视图
+        if (this.scrolled && this.#views.size > 0)
+            for (const [, v] of this.#views) v.render(layout)
+        else this.#view.render(layout)
         this.#scrollToAnchor(this.#anchor)
     }
     get scrolled() {
@@ -781,7 +835,41 @@ export class Paginator extends HTMLElement {
         return this.#container.getBoundingClientRect()[this.sideProp]
     }
     get viewSize() {
-        return this.#view.element.getBoundingClientRect()[this.sideProp]
+        return this.#viewSizeOf(this.#index)
+    }
+    // [shuge] 单个视图（章节）在滚动轴上的尺寸；无对应视图时返回 0
+    #viewSizeOf(index) {
+        const view = this.#views.get(index)
+            ?? (index === this.#index ? this.#view : null)
+        return view?.element.getBoundingClientRect()[this.sideProp] ?? 0
+    }
+    // [shuge] 所有已加载视图的总高度（连续滚动的虚拟内容总长）
+    get #renderedViewSize() {
+        let total = 0
+        for (const [, view] of this.#views)
+            total += view.element.getBoundingClientRect()[this.sideProp]
+        return total
+    }
+    get #sortedViews() {
+        return [...this.#views.entries()].sort(([a], [b]) => a - b)
+    }
+    get #primaryView() {
+        return this.scrolled
+            ? (this.#views.get(this.#primaryIndex) ?? this.#view)
+            : this.#view
+    }
+    // [shuge] 某视图之前所有视图的高度和 = 它在滚动容器内的偏移
+    #getViewOffset(index) {
+        let offset = 0
+        for (const [i, view] of this.#sortedViews) {
+            if (i === index) return offset
+            offset += view.element.getBoundingClientRect()[this.sideProp]
+        }
+        return offset
+    }
+    #indexOfView(view) {
+        for (const [i, v] of this.#views) if (v === view) return i
+        return this.#index
     }
     get start() {
         return Math.abs(this.#container[this.scrollProp])
@@ -807,6 +895,14 @@ export class Paginator extends HTMLElement {
             element[scrollProp] + delta))
     }
     snap(vx, vy) {
+        // [shuge] 滚动模式为原生滚动 + 连续多视图，没有页栅格可吸附
+        if (this.scrolled) return
+        // [shuge] 触摸设备上每次点按都会触发 touchend → snap，与 click 路径的
+        // #turnPage 并发。章末 snap 会自行 #goTo 跳章，与 #turnPage 的 #goTo
+        // 双重加载同一章节、互相破坏视图状态，导致翻页永久卡死。
+        // 与 #turnPage 一样纳入 #locked，并发时只走一条路径。
+        if (this.#locked) return
+        this.#locked = true
         const velocity = this.#vertical ? vy : vx
         const [offset, a, b] = this.#scrollBounds
         const { start, end, pages, size } = this
@@ -823,6 +919,8 @@ export class Paginator extends HTMLElement {
                 index: this.#adjacentIndex(dir),
                 anchor: dir < 0 ? () => 1 : () => 0,
             })
+        }).finally(() => {
+            this.#locked = false
         })
     }
     #onTouchStart(e) {
@@ -885,9 +983,14 @@ export class Paginator extends HTMLElement {
                 ? ({ top, bottom }) => ({ left: top, right: bottom })
                 : f => f
     }
-    async #scrollToRect(rect, reason) {
+    async #scrollToRect(rect, reason, view) {
         if (this.scrolled) {
+            // [shuge] 多视图：rect 是该章节文档内坐标，需加上该视图在
+            // 滚动容器内的偏移
+            const idx = view ? this.#indexOfView(view)
+                : (this.#primaryIndex >= 0 ? this.#primaryIndex : this.#index)
             const offset = this.#getRectMapper()(rect).left - this.#margin
+                + this.#getViewOffset(idx)
             return this.#scrollTo(offset, reason)
         }
         const offset = this.#getRectMapper()(rect).left
@@ -925,11 +1028,37 @@ export class Paginator extends HTMLElement {
     }
     async #scrollToAnchor(anchor, reason = 'anchor') {
         this.#anchor = anchor
-        const rects = uncollapse(anchor)?.getClientRects?.()
+        // [shuge] 连续滚动模式：分数锚点 = 主视图偏移 + 分数×主视图高度；
+        // Range/Element 锚点先找到所属视图，再加上该视图在容器内的偏移
+        if (this.scrolled && this.#views.size > 0) {
+            if (anchor == null || typeof anchor === 'number') {
+                const off = this.#primaryIndex >= 0
+                    ? this.#getViewOffset(this.#primaryIndex)
+                    : this.#getViewOffset(this.#index)
+                const vSize = this.#viewSizeOf(
+                    this.#primaryIndex >= 0 ? this.#primaryIndex : this.#index)
+                return this.#scrollTo(off + (anchor ?? 0) * vSize, reason)
+            }
+            const rects = uncollapse(anchor)?.getClientRects?.()
+            if (rects) {
+                const rect = Array.from(rects)
+                    .find(r => r.width > 0 && r.height > 0) || rects[0]
+                if (!rect) return
+                const doc = anchor.startContainer?.ownerDocument
+                    ?? (anchor.nodeType ? anchor.ownerDocument : null)
+                let view = this.#primaryView
+                for (const [, v] of this.#views)
+                    if (v.document === doc) { view = v; break }
+                await this.#scrollToRect(rect, reason, view)
+                return
+            }
+            return
+        }
         // if anchor is an element or a range
+        const rects = uncollapse(anchor)?.getClientRects?.()
+        // when the start of the range is immediately after a hyphen in the
+        // previous column, there is an extra zero width rect in that column
         if (rects) {
-            // when the start of the range is immediately after a hyphen in the
-            // previous column, there is an extra zero width rect in that column
             const rect = Array.from(rects)
                 .find(r => r.width > 0 && r.height > 0) || rects[0]
             if (!rect) return
@@ -948,24 +1077,76 @@ export class Paginator extends HTMLElement {
         await this.#scrollToPage(newPage + 1, reason)
     }
     #getVisibleRange() {
-        if (this.scrolled) return getVisibleRange(this.#view.document,
-            this.start + this.#margin, this.end - this.#margin, this.#getRectMapper())
+        if (this.scrolled) {
+            // [shuge] 多视图：视口可能同时跨两个章节。以覆盖视口中线的视图为
+            // 主（读者真正在读的那章，进度/章节标题跟它走），其余落在视口内
+            // 的视图作兜底；整段折叠（如纯图片章节）的留作最后手段
+            const center = this.start + this.size / 2
+            let fallback
+            let collapsed
+            for (const [index, v] of this.#sortedViews) {
+                if (!v.document?.body) continue
+                const off = this.#getViewOffset(index)
+                const vSize = v.element.getBoundingClientRect()[this.sideProp]
+                if (off + vSize <= this.start || off >= this.end) continue
+                let range
+                try {
+                    range = getVisibleRange(v.document,
+                        this.start + this.#margin - off,
+                        this.end - this.#margin - off,
+                        this.#getRectMapper())
+                } catch { continue }
+                if (!range) continue
+                const coversCenter = center >= off && center < off + vSize
+                if (range.collapsed) {
+                    if (!collapsed || coversCenter) collapsed = { range, index }
+                    continue
+                }
+                if (coversCenter) return { range, index }
+                fallback ??= { range, index }
+            }
+            return fallback ?? collapsed
+        }
         const size = this.#rtl ? -this.size : this.size
-        return getVisibleRange(this.#view.document,
+        const range = getVisibleRange(this.#view.document,
             this.start - size, this.end - size, this.#getRectMapper())
+        // [shuge] 与滚动模式统一返回 {range, index}，#afterScroll 的解构
+        // 两种模式共用（原分页路径直接返回 Range，解构会让 index 变 undefined）
+        return range ? { range, index: this.#index } : undefined
     }
     #afterScroll(reason) {
-        const range = this.#getVisibleRange()
+        // [shuge] iframe 尚未 load 完时 document.body 为 null，
+        // getVisibleRange 内部会解构 body 抛 TypeError，导致 #locked 卡死
+        if (this.#view && !this.#view.document?.body) return
+        const found = this.#getVisibleRange()
+        if (!found?.range) return
+        const { range, index: visibleIndex } = found
         this.#lastVisibleRange = range
         // don't set new anchor if relocation was to scroll to anchor
         if (reason !== 'selection' && reason !== 'navigation' && reason !== 'anchor')
             this.#anchor = range
         else this.#justAnchored = true
 
-        const index = this.#index
+        // [shuge] 连续滚动：视口中线跨入新章节时切换主视图（进度、目录
+        // 高亮、跳章箭头的基准都跟着走），并按需裁剪/补载
+        if (this.scrolled && visibleIndex != null
+            && visibleIndex !== this.#primaryIndex && this.#views.has(visibleIndex)) {
+            this.#primaryIndex = visibleIndex
+            this.#index = visibleIndex
+            this.#view = this.#views.get(visibleIndex)
+            this.#trimDistantViews()
+            void this.#preloadNext()
+        }
+
+        const index = visibleIndex ?? this.#index
         const detail = { reason, range, index }
-        if (this.scrolled) detail.fraction = this.start / this.viewSize
-        else if (this.pages > 0) {
+        if (this.scrolled) {
+            // [shuge] 分数相对主视图内部，保持与单视图时代一致的口径
+            const off = this.#getViewOffset(index)
+            const vSize = this.#viewSizeOf(index)
+            detail.fraction = vSize > 0
+                ? Math.min(1, Math.max(0, (this.start - off) / vSize)) : 0
+        } else if (this.pages > 0) {
             const { page, pages } = this
             this.#header.style.visibility = page > 1 ? 'visible' : 'hidden'
             detail.fraction = (page - 1) / (pages - 2)
@@ -974,7 +1155,17 @@ export class Paginator extends HTMLElement {
         this.dispatchEvent(new CustomEvent('relocate', { detail }))
     }
     async #display(promise) {
-        const { index, src, anchor, onLoad, select } = await promise
+        const result = await promise
+        // [shuge] 章节加载失败时 #goTo 的 catch 会解析为 null，
+        // 必须早退并保留旧 #index —— 否则 #index 变 undefined，
+        // #adjacentIndex 变 NaN、atEnd 恒 true，翻页永久失效
+        if (result == null || result.index == null) return
+        const { index, src, anchor, onLoad, select } = result
+        // [shuge] 滚动模式走连续多视图路径（章节由 #displayScrolled 自行加载）
+        if (this.scrolled) {
+            await this.#displayScrolled(index, anchor, select)
+            return
+        }
         this.#index = index
         const hasFocus = this.#view?.document?.hasFocus()
         if (src) {
@@ -1003,10 +1194,220 @@ export class Paginator extends HTMLElement {
             ? anchor(this.#view.document) : anchor) ?? 0, select)
         if (hasFocus) this.focusView()
     }
+    // [shuge] ================= 连续滚动多视图（滚动模式专用） =================
+
+    /** 每个新文档都要：建样式挂载点、补一份缓存阅读样式、通知 view.js 挂链接 */
+    #afterLoadFor(index) {
+        return doc => {
+            if (doc.head) {
+                const $styleBefore = doc.createElement('style')
+                doc.head.prepend($styleBefore)
+                const $style = doc.createElement('style')
+                doc.head.append($style)
+                this.#styleMap.set(doc, [$styleBefore, $style])
+            }
+            this.setStyles(this.#styles)
+            this.dispatchEvent(new CustomEvent('load', { detail: { doc, index } }))
+        }
+    }
+
+    #attachOverlayer(view, index) {
+        this.dispatchEvent(new CustomEvent('create-overlayer', {
+            detail: {
+                doc: view.document, index,
+                attach: overlayer => view.overlayer = overlayer,
+            },
+        }))
+    }
+
+    /** 创建视图并按 section 顺序插进滚动容器（不打断既有视图） */
+    #createAdjacentView(index) {
+        const view = new View({
+            container: this,
+            onExpand: () => {
+                // [shuge] 只有主视图的 expand 才允许重定位到当前锚点；
+                // 预载期间一律抑制，避免加载中的布局抖动把视口拽走
+                if (!this.#filling && this.#views.get(this.#primaryIndex) === view)
+                    this.#scrollToAnchor(this.#anchor)
+            },
+        })
+        const el = view.element
+        let inserted = false
+        for (const [i, v] of this.#sortedViews) {
+            if (i > index) {
+                this.#container.insertBefore(el, v.element)
+                inserted = true
+                break
+            }
+        }
+        if (!inserted) this.#container.append(el)
+        this.#views.set(index, view)
+        return view
+    }
+
+    /** 预载相邻章节：上方插入时做滚动补偿，视口内容保持不动 */
+    async #loadAdjacentSection(index) {
+        if (this.#views.has(index) || !this.#canGoToIndex(index)) return
+        const section = this.sections[index]
+        if (!section || section.linear === 'no') return
+        const firstIndex = this.#sortedViews[0]?.[0]
+        const isPrepend = firstIndex != null && index < firstIndex
+        let startBefore = 0
+        try {
+            startBefore = isPrepend ? this.#container[this.scrollProp] : 0
+        } catch { startBefore = 0 }
+        let src
+        try {
+            src = await section.load()
+        } catch (e) {
+            console.warn(e)
+            console.warn(new Error(`Failed to load section ${index}`))
+            return
+        }
+        const view = this.#createAdjacentView(index)
+        const direction = this.#vertical ? -1 : 1
+        // [shuge] 插入占位（视口高）后先补偿一次；加载完拿到真实高度再补偿。
+        // 两次都以「目标位置 = 插入前位置 + 新增高度」收敛，浏览器若已做
+        // scroll anchoring，correction 自然为 0
+        const compensate = () => {
+            if (!isPrepend) return
+            const added = view.element.getBoundingClientRect()[this.sideProp]
+            const current = this.#container[this.scrollProp]
+            const correction = startBefore + direction * added - current
+            if (Math.abs(correction) > 0.5)
+                this.#container[this.scrollProp] += correction
+        }
+        compensate()
+        try {
+            await view.load(src, this.#afterLoadFor(index), this.#beforeRender.bind(this))
+        } catch (e) {
+            console.warn(e)
+            this.#destroyView(index)
+            return
+        }
+        this.#attachOverlayer(view, index)
+        compensate()
+    }
+
+    /** 销毁单个视图并回收章节内容（blob URL） */
+    #destroyView(index) {
+        const view = this.#views.get(index)
+        if (!view) return
+        view.destroy()
+        view.element.remove()
+        this.#views.delete(index)
+        this.sections[index]?.unload?.()
+    }
+
+    /** 前后补齐相邻章节，直到各方向留够缓冲或到书头/书尾 */
+    async #preloadNext() {
+        if (this.#filling || !this.scrolled) return
+        this.#filling = true
+        try {
+            for (let i = 0; i < 6; i++) {
+                if (this.size > 0
+                    && this.#renderedViewSize - this.end >= this.size * 4) break
+                const last = this.#sortedViews[this.#sortedViews.length - 1]?.[0]
+                if (last == null) break
+                const nextIdx = this.#adjacentIndex(1, last)
+                if (nextIdx == null || this.#views.has(nextIdx)) break
+                await this.#loadAdjacentSection(nextIdx)
+                if (!this.#views.has(nextIdx)) break
+            }
+            for (let i = 0; i < 6; i++) {
+                if (this.size > 0 && this.start >= this.size * 3) break
+                const first = this.#sortedViews[0]?.[0]
+                if (first == null) break
+                const prevIdx = this.#adjacentIndex(-1, first)
+                if (prevIdx == null || this.#views.has(prevIdx)) break
+                await this.#loadAdjacentSection(prevIdx)
+                if (!this.#views.has(prevIdx)) break
+            }
+            // 等一帧让 ResizeObserver 回调跑完（#filling 仍为 true，
+            // onExpand 不会重定位），再放开
+            await new Promise(r => requestAnimationFrame(r))
+        } finally {
+            this.#filling = false
+        }
+    }
+
+    /** 裁剪离视口太远的视图，长书久读不涨内存；后方裁剪带滚动补偿 */
+    #trimDistantViews() {
+        const size = this.size
+        if (!size || !this.scrolled) return
+        const maxDistance = size * 6
+        const maxViews = 8
+        for (const [index] of this.#sortedViews) {
+            if (index <= this.#primaryIndex) continue
+            const off = this.#getViewOffset(index)
+            if (off - this.end > maxDistance) this.#destroyView(index)
+        }
+        let views = this.#sortedViews
+        while (views.length > maxViews) {
+            const [index, view] = views[0]
+            if (index >= this.#primaryIndex) break
+            const off = this.#getViewOffset(index)
+            const vSize = view.element.getBoundingClientRect()[this.sideProp]
+            if (off + vSize >= this.start - maxDistance) break
+            // 先减滚动位置再摘除，视口停留不动
+            this.#container[this.scrollProp] -= vSize
+            this.#destroyView(index)
+            views = this.#sortedViews
+        }
+    }
+
+    /** 滚动模式的 #display：目标视图已预载就直接滚过去，否则加载后接管主视图 */
+    async #displayScrolled(index, anchor, select) {
+        const section = this.sections[index]
+        if (!section || section.linear === 'no') return
+        const wasPrimary = this.#primaryIndex
+        let view = this.#views.get(index)
+        if (!view) {
+            const adjacent = wasPrimary >= 0 && Math.abs(index - wasPrimary) === 1
+            let src
+            try {
+                src = await section.load()
+            } catch (e) {
+                console.warn(e)
+                console.warn(new Error(`Failed to load section ${index}`))
+                return
+            }
+            view = this.#createAdjacentView(index)
+            try {
+                await view.load(src, this.#afterLoadFor(index),
+                    this.#beforeRender.bind(this))
+            } catch (e) {
+                console.warn(e)
+                this.#destroyView(index)
+                return
+            }
+            this.#attachOverlayer(view, index)
+            // 跨多章跳转（目录/进度）：切掉其它视图，落到目标章
+            if (!adjacent && wasPrimary >= 0)
+                for (const [i] of [...this.#views])
+                    if (i !== index) this.#destroyView(i)
+        }
+        this.#primaryIndex = index
+        this.#view = view
+        this.#index = index
+        await this.#scrollToAnchor((typeof anchor === 'function'
+            ? anchor(view.document) : anchor) ?? 0, select)
+        this.#trimDistantViews()
+        void this.#preloadNext()
+    }
+
+    // ====================================================================
+
     #canGoToIndex(index) {
         return index >= 0 && index <= this.sections.length - 1
     }
     async #goTo({ index, anchor, select}) {
+        // [shuge] 滚动模式：视图可能已预载，直接走连续路径，不重复 load
+        if (this.scrolled) {
+            if (!this.sections[index]) return
+            await this.#displayScrolled(index, anchor, select)
+            return
+        }
         if (index === this.#index) await this.#display({ index, anchor, select })
         else {
             const oldIndex = this.#index
@@ -1020,7 +1421,9 @@ export class Paginator extends HTMLElement {
                 .catch(e => {
                     console.warn(e)
                     console.warn(new Error(`Failed to load section ${index}`))
-                    return {}
+                    // [shuge] 原实现返回 {}，导致 #display 把 #index 写成 undefined、
+                    // 翻页从此永久失效；改为解析为 null，#display 早退并停留旧章节
+                    return null
                 }))
         }
     }
@@ -1030,22 +1433,44 @@ export class Paginator extends HTMLElement {
         if (this.#canGoToIndex(resolved.index)) return this.#goTo(resolved)
     }
     #scrollPrev(distance) {
-        if (!this.#view) return true
+        if (!this.#primaryView) return true
         if (this.scrolled) {
+            // [shuge] 连续滚动：视口内还有内容就滚一屏（返回 promise，
+            // #turnPage 视为「没到书头，不用 goTo」）
             if (this.start > 0) return this.#scrollTo(
                 Math.max(0, this.start - (distance ?? this.size)), null, true)
-            return true
+            // 已滚到已加载内容顶部：先补载上一章，再往上一屏
+            const first = this.#sortedViews[0]?.[0]
+            const prevIdx = first != null
+                ? this.#adjacentIndex(-1, first) : this.#adjacentIndex(-1)
+            if (prevIdx != null) return this.#loadAdjacentSection(prevIdx)
+                .then(() => this.#scrollTo(
+                    Math.max(0, this.start - (distance ?? this.size)), null, true))
+                .catch(() => { /* 加载失败停住即可 */ })
+            return true // 真正的书头
         }
         if (this.atStart) return
         const page = this.page - 1
         return this.#scrollToPage(page, 'page', true).then(() => page <= 0)
     }
     #scrollNext(distance) {
-        if (!this.#view) return true
+        if (!this.#primaryView) return true
         if (this.scrolled) {
-            if (this.viewSize - this.end > 2) return this.#scrollTo(
-                Math.min(this.viewSize, distance ? this.start + distance : this.end), null, true)
-            return true
+            const max = this.#renderedViewSize - this.size
+            if (this.end < max - 2) return this.#scrollTo(
+                Math.min(max, this.start + (distance ?? this.size)), null, true)
+            // 已滚到已加载内容底部：先补载下一章，再往下一屏
+            const last = this.#sortedViews[this.#sortedViews.length - 1]?.[0]
+            const nextIdx = last != null
+                ? this.#adjacentIndex(1, last) : this.#adjacentIndex(1)
+            if (nextIdx != null) return this.#loadAdjacentSection(nextIdx)
+                .then(() => {
+                    const max2 = this.#renderedViewSize - this.size
+                    if (this.end < max2 - 2) return this.#scrollTo(
+                        Math.min(max2, this.start + (distance ?? this.size)), null, true)
+                })
+                .catch(() => { /* 加载失败停住即可 */ })
+            return true // 真正的书尾
         }
         if (this.atEnd) return
         const page = this.page + 1
@@ -1053,26 +1478,42 @@ export class Paginator extends HTMLElement {
         return this.#scrollToPage(page, 'page', true).then(() => page >= pages - 1)
     }
     get atStart() {
+        // [shuge] 滚动模式：容器滚到顶且第一个已加载视图之前再无章节
+        if (this.scrolled) {
+            const first = this.#sortedViews[0]?.[0]
+            return this.start <= 0
+                && this.#adjacentIndex(-1, first ?? this.#index) == null
+        }
         return this.#adjacentIndex(-1) == null && this.page <= 1
     }
     get atEnd() {
+        // [shuge] 滚动模式：滚到已加载内容底部且最后一个视图之后再无章节
+        if (this.scrolled) {
+            const last = this.#sortedViews[this.#sortedViews.length - 1]?.[0]
+            return this.#renderedViewSize - this.end <= 2
+                && this.#adjacentIndex(1, last ?? this.#index) == null
+        }
         return this.#adjacentIndex(1) == null && this.page >= this.pages - 2
     }
-    #adjacentIndex(dir) {
-        for (let index = this.#index + dir; this.#canGoToIndex(index); index += dir)
+    #adjacentIndex(dir, from = this.#index) {
+        for (let index = from + dir; this.#canGoToIndex(index); index += dir)
             if (this.sections[index]?.linear !== 'no') return index
     }
     async #turnPage(dir, distance) {
         if (this.#locked) return
         this.#locked = true
-        const prev = dir === -1
-        const shouldGo = await (prev ? this.#scrollPrev(distance) : this.#scrollNext(distance))
-        if (shouldGo) await this.#goTo({
-            index: this.#adjacentIndex(dir),
-            anchor: prev ? () => 1 : () => 0,
-        })
-        if (shouldGo || !this.hasAttribute('animated')) await wait(100)
-        this.#locked = false
+        try {
+            const prev = dir === -1
+            const shouldGo = await (prev ? this.#scrollPrev(distance) : this.#scrollNext(distance))
+            if (shouldGo) await this.#goTo({
+                index: this.#adjacentIndex(dir),
+                anchor: prev ? () => 1 : () => 0,
+            })
+            if (shouldGo || !this.hasAttribute('animated')) await wait(100)
+        } finally {
+            // [shuge] 链路里任何一步抛异常都不能让 #locked 永久卡死
+            this.#locked = false
+        }
     }
     prev(distance) {
         return this.#turnPage(-1, distance)
@@ -1095,6 +1536,14 @@ export class Paginator extends HTMLElement {
         return this.goTo({ index })
     }
     getContents() {
+        // [shuge] 多视图：返回所有已加载章节（搜索/标注/TTS 逐文档遍历）
+        if (this.scrolled) {
+            const out = []
+            for (const [index, view] of this.#sortedViews)
+                if (view.document)
+                    out.push({ index, overlayer: view.overlayer, doc: view.document })
+            return out
+        }
         if (this.#view) return [{
             index: this.#index,
             overlayer: this.#view.overlayer,
@@ -1104,29 +1553,44 @@ export class Paginator extends HTMLElement {
     }
     setStyles(styles) {
         this.#styles = styles
-        const $$styles = this.#styleMap.get(this.#view?.document)
-        if (!$$styles) return
-        const [$beforeStyle, $style] = $$styles
-        if (Array.isArray(styles)) {
-            const [beforeStyle, style] = styles
-            $beforeStyle.textContent = beforeStyle
-            $style.textContent = style
-        } else $style.textContent = styles
+        const applyTo = doc => {
+            const $$styles = this.#styleMap.get(doc)
+            if (!$$styles) return
+            const [$beforeStyle, $style] = $$styles
+            if (Array.isArray(styles)) {
+                const [beforeStyle, style] = styles
+                $beforeStyle.textContent = beforeStyle
+                $style.textContent = style
+            } else $style.textContent = styles
+        }
+        // [shuge] 多视图：夜读/字号切换时所有已加载章节同步换样式
+        if (this.scrolled) {
+            for (const [, view] of this.#views)
+                if (view.document) applyTo(view.document)
+        } else applyTo(this.#view?.document)
 
         // NOTE: needs `requestAnimationFrame` in Chromium
-        requestAnimationFrame(() =>
-            this.#background.style.background = getBackground(this.#view.document))
+        requestAnimationFrame(() => {
+            const doc = this.#primaryView?.document ?? this.#view?.document
+            if (doc) this.#background.style.background = getBackground(doc)
+        })
 
         // needed because the resize observer doesn't work in Firefox
-        this.#view?.document?.fonts?.ready?.then(() => this.#view.expand())
+        const views = this.scrolled ? [...this.#views.values()] : [this.#view]
+        for (const view of views)
+            view?.document?.fonts?.ready?.then(() => view.expand())
     }
     focusView() {
         this.#view.document.defaultView.focus()
     }
     destroy() {
         this.#observer.unobserve(this)
-        this.#view.destroy()
-        this.#view = null
+        // [shuge] 多视图：全部销毁并回收章节内容
+        for (const [index] of [...this.#views]) this.#destroyView(index)
+        if (this.#view) {
+            this.#view.destroy()
+            this.#view = null
+        }
         this.sections[this.#index]?.unload?.()
         this.#mediaQuery.removeEventListener('change', this.#mediaQueryListener)
     }

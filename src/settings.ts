@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core'
 import { computed, reactive, ref, watch } from 'vue'
 
 /** 阅读配色。follow = 跟随 App 明暗（App 暗则夜读，亮则纸白） */
@@ -54,6 +55,12 @@ export interface ReaderSettings {
   /** 自选/图片取色得到的颜色，system 模式下作为取不到系统色时的兜底 */
   monetHex: string
   ratingSource: RatingSource
+  /** 是否显示「书评」入口（阅读页底栏 + 书架长按的网文站入口） */
+  showReview: boolean
+  /** 液态玻璃的通透度 10-90（百分比），仅 uiStyle='glass' 时生效 */
+  glassOpacity: number
+  /** 导入时引用原文件（不复制到书库）。不支持的浏览器自动回退复制 */
+  importByRef: boolean
 }
 
 const KEY = 'shuge.settings.v1'
@@ -79,6 +86,9 @@ const DEFAULTS: ReaderSettings = {
   monetSource: 'system',
   monetHex: '#7c8f7a',
   ratingSource: 'auto',
+  showReview: true,
+  glassOpacity: 40,
+  importByRef: true,
 }
 
 const THEMES: ThemeKey[] = ['follow', 'paper', 'rice', 'green', 'night']
@@ -116,6 +126,12 @@ const migrate = (raw: Record<string, unknown>): Partial<ReaderSettings> => {
   if (typeof out.showPercent !== 'boolean') out.showPercent = false
   if (typeof out.shelfTabs !== 'boolean') out.shelfTabs = true
   out.monetSource = pick(MONET_SOURCES, out.monetSource, 'system')
+  if (typeof out.showReview !== 'boolean') out.showReview = true
+  if (typeof out.importByRef !== 'boolean') out.importByRef = true
+  out.glassOpacity = Math.min(90, Math.max(10,
+    typeof out.glassOpacity === 'number' && Number.isFinite(out.glassOpacity)
+      ? Math.round(out.glassOpacity)
+      : 40))
   if (typeof out.monetHex !== 'string' || !/^#[0-9a-f]{6}$/i.test(out.monetHex)) {
     out.monetHex = DEFAULTS.monetHex
   }
@@ -165,6 +181,37 @@ const darkQuery =
 
 /** 系统暗色状态：做成响应式，阅读器要靠它重建 iframe 内的排版样式。 */
 export const systemDark = ref(darkQuery?.matches ?? false)
+
+/*
+ * [shuge] 安卓原生壳里，WebView 的 prefers-color-scheme 在部分 ROM 上不可靠
+ * （系统已切亮色、matchMedia 仍报 dark）。原生有 SystemColor.getDarkMode /
+ * systemDarkChanged（uiMode 的 NIGHT_MASK），以它的值为准；
+ * matchMedia 只作为网页端 / 插件没注册时的兜底。
+ */
+if (Capacitor.isNativePlatform()) {
+  void import('./ui/systemcolor')
+    .then(({ SystemColor }) =>
+      Promise.all([
+        SystemColor.getDarkMode(),
+        SystemColor.addListener('systemDarkChanged', (data: { dark?: boolean }) => {
+          if (typeof data?.dark !== 'boolean') return
+          systemDark.value = data.dark
+          applyTheme()
+        }).catch(() => {
+          /* 老插件没有这个事件，忽略 */
+        }),
+      ]),
+    )
+    .then(([mode]) => {
+      if (mode && typeof mode.dark === 'boolean' && mode.dark !== systemDark.value) {
+        systemDark.value = mode.dark
+        applyTheme()
+      }
+    })
+    .catch(() => {
+      /* 插件未注册等场景安静降级，回 matchMedia */
+    })
+}
 
 /** App 当前实际明暗（scheme=auto 时取系统） */
 export const appDark = computed(() =>
@@ -221,14 +268,14 @@ export const SCHEME_LABELS: Record<SchemeKey, string> = {
 }
 
 export const UI_STYLE_LABELS: Record<UiStyleKey, string> = {
-  classic: '经典',
-  monet: '莫奈取色',
-  glass: '液态玻璃',
+  classic: '极简',
+  monet: '原生',
+  glass: '液态玻璃（开发中）',
 }
 
 export const UI_STYLE_NOTES: Record<UiStyleKey, string> = {
-  classic: '文库纸面：淡紫底、衬线题字、细格纹',
-  monet: '跟系统壁纸取色，整屏跟着变',
+  classic: '纸面简洁：素底、细线、不打扰',
+  monet: 'MD3 动态取色，跟系统壁纸走（谷歌 Material You 那套）',
   glass: '半透明磨砂，浮层像一片玻璃',
 }
 

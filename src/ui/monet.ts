@@ -186,6 +186,128 @@ const washOf = (c: MonetColor, dark: boolean): string => {
 
 let currentAccent: MonetColor | null = null
 
+/* ---------- MD3 动态配色（Material You 的做法） ----------
+   谷歌官方路径：壁纸 → 生成 6 组 tonal palette（primary/secondary/tertiary/
+   neutral/neutral-variant/error）→ 按 tone 0-100 取出 scheme 角色表 →
+   app 全部用角色（primary / onPrimary / primaryContainer / surface /
+   surfaceContainer…）而不直接用色值。
+   这里按同一套角色表取色：hue 来自取色源，中性面用压到极低饱和的同一 hue，
+   主色走 usable() 的对比度区间，角色到 App 令牌的映射见 applyMonet。 */
+
+const NEUTRAL_SAT_MAX = 9
+
+/** 同一 hue 的低饱和中性色（MD3 neutral palette 的近似） */
+const tone = (c: MonetColor, l: number, satScale = 1): MonetColor => ({
+  h: c.h,
+  s: clamp(c.s * satScale, 2, NEUTRAL_SAT_MAX),
+  l,
+})
+
+/** 主色（强调色）的中饱和版，别太艳也别发灰 */
+const keySat = (c: MonetColor): MonetColor => ({
+  h: c.h,
+  s: clamp(c.s, 38, 68),
+  l: c.l,
+})
+
+export interface Md3Roles {
+  bg: string
+  bgAlt: string
+  surface: string
+  surface2: string
+  text: string
+  text2: string
+  text3: string
+  line: string
+  primary: string
+  onPrimary: string
+  primaryContainer: string
+  onPrimaryContainer: string
+  secondaryContainer: string
+  onSecondaryContainer: string
+}
+
+/**
+ * 从取色源生成 MD3 scheme 角色的近似值。
+ * tone 取值对齐 M3 baseline scheme：
+ * 浅色 surface=98 / container=94 / high=92 / onSurface=14 / variant=34；
+ * 深色 surface=6 / container=12 / high=16 / onSurface=92 / variant=72。
+ */
+export const md3Roles = (src: MonetColor, dark: boolean): Md3Roles => {
+  const key = keySat(src)
+  const primary = usable(key, dark)
+  if (!dark) {
+    return {
+      bg: hslCss(tone(src, 98)),
+      bgAlt: hslCss(tone(src, 95)),
+      surface: hslCss(tone(src, 94)),
+      surface2: hslCss(tone(src, 91)),
+      text: hslCss(tone(src, 14, 2)),
+      text2: hslCss(tone(src, 34, 3)),
+      text3: hslCss(tone(src, 46, 3)),
+      line: hslCss(tone(src, 30, 2), 0.13),
+      primary: hslCss(primary),
+      onPrimary: '#ffffff',
+      primaryContainer: hslCss(tone(key, 88, 3.2)),
+      onPrimaryContainer: hslCss(tone(src, 12, 4)),
+      secondaryContainer: hslCss(tone(key, 89, 1.8)),
+      onSecondaryContainer: hslCss(tone(src, 16, 3)),
+    }
+  }
+  return {
+    bg: hslCss(tone(src, 6)),
+    bgAlt: hslCss(tone(src, 9)),
+    surface: hslCss(tone(src, 12)),
+    surface2: hslCss(tone(src, 16)),
+    text: hslCss(tone(src, 90, 1.4)),
+    text2: hslCss(tone(src, 72, 1.8)),
+    text3: hslCss(tone(src, 64, 1.8)),
+    line: hslCss(tone(src, 80, 1.2), 0.13),
+    primary: hslCss(primary),
+    onPrimary: hslCss(tone(src, 12, 1.6)),
+    primaryContainer: hslCss(tone(key, 30, 1.4)),
+    onPrimaryContainer: hslCss(tone(key, 90, 1.6)),
+    secondaryContainer: hslCss(tone(key, 27, 1.1)),
+    onSecondaryContainer: hslCss(tone(key, 88, 1.3)),
+  }
+}
+
+/** 角色表 → App 现有令牌 + MD3 专属令牌的映射，写进 documentElement.style */
+const applyRoles = (roles: Md3Roles): void => {
+  const root = document.documentElement
+  const set = (k: string, v: string): void => root.style.setProperty(k, v)
+  set('--bg', roles.bg)
+  set('--bg-alt', roles.bgAlt)
+  set('--surface', roles.surface)
+  set('--surface-2', roles.surface2)
+  set('--text', roles.text)
+  set('--text-2', roles.text2)
+  set('--text-3', roles.text3)
+  set('--line', roles.line)
+  set('--md-primary', roles.primary)
+  set('--md-primary-container', roles.primaryContainer)
+  set('--md-on-primary-container', roles.onPrimaryContainer)
+  set('--md-secondary-container', roles.secondaryContainer)
+  set('--md-on-secondary-container', roles.onSecondaryContainer)
+}
+
+/** clearMonet 时要一并撤掉的 MD3 令牌 */
+const ROLE_KEYS = [
+  '--bg',
+  '--bg-alt',
+  '--surface',
+  '--surface-2',
+  '--text',
+  '--text-2',
+  '--text-3',
+  '--line',
+  '--md-primary',
+  '--md-primary-container',
+  '--md-on-primary-container',
+  '--md-secondary-container',
+  '--md-on-secondary-container',
+]
+
 /** 把取色结果写到根节点；无封面时用默认色，保证风格不发灰 */
 export const applyMonet = (color: MonetColor | null, dark: boolean): void => {
   const c = usable(color ?? DEFAULT_COLOR, dark)
@@ -194,6 +316,9 @@ export const applyMonet = (color: MonetColor | null, dark: boolean): void => {
   root.style.setProperty('--accent', hslCss(c))
   root.style.setProperty('--accent-soft', hslCss(c, dark ? 0.18 : 0.12))
   root.style.setProperty('--monet-wash', washOf(c, dark))
+  /* [shuge] 原生外观走完整 MD3 角色表：表面/文字/描边全部从取色源生成，
+     不再沿用经典纸色——这才叫「整屏跟着壁纸变」 */
+  applyRoles(md3Roles(color ?? DEFAULT_COLOR, dark))
 }
 
 /** 切回经典/玻璃时把覆盖掉的变量清掉，否则会一直延续上一个封面的颜色 */
@@ -203,6 +328,7 @@ export const clearMonet = (): void => {
   root.style.removeProperty('--accent')
   root.style.removeProperty('--accent-soft')
   root.style.removeProperty('--monet-wash')
+  for (const k of ROLE_KEYS) root.style.removeProperty(k)
 }
 
 /** 明暗切换后按新底色重算一次亮度区间 */

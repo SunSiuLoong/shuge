@@ -1,5 +1,6 @@
 package com.sunbo.shuge;
 
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
@@ -38,6 +39,33 @@ public class SystemColorPlugin extends Plugin {
             ret.put("accent3", colorOf(android.R.color.system_accent3_200));
         }
         call.resolve(ret);
+    }
+
+    /**
+     * [shuge] 读系统明暗（uiMode 的 NIGHT_MASK）。
+     * WebView 的 prefers-color-scheme 在部分 ROM/WebView 版本上不可靠
+     * （系统已切亮色、matchMedia 仍报 dark），前端以这里的值为准。
+     */
+    @PluginMethod
+    public void getDarkMode(PluginCall call) {
+        int mask = getContext().getResources()
+            .getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+        JSObject ret = new JSObject();
+        ret.put("dark", mask == Configuration.UI_MODE_NIGHT_YES);
+        call.resolve(ret);
+    }
+
+    /**
+     * [shuge] 系统明暗切换时通知前端。Capacitor 的 Bridge 会在
+     * onConfigurationChanged 里调这个钩子。
+     */
+    @Override
+    protected void handleOnConfigurationChanged(Configuration newConfig) {
+        super.handleOnConfigurationChanged(newConfig);
+        int mask = newConfig.uiMode & Configuration.UI_MODE_NIGHT_MASK;
+        JSObject ret = new JSObject();
+        ret.put("dark", mask == Configuration.UI_MODE_NIGHT_YES);
+        notifyListeners("systemDarkChanged", ret);
     }
 
     /**

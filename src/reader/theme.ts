@@ -95,8 +95,15 @@ export const readerVars = (p: ReaderPalette): Record<string, string> => {
      靠 blur 保住文字可读性 */
   if (settings.uiStyle === 'glass') {
     const night = p.bg === '#16181a'
-    const alpha = night ? 62 : 60
-    vars['--glass-bg'] = `color-mix(in srgb, ${p.bg} ${alpha}%, transparent)`
+    /* 实底占比 = 100 - 设置里的「玻璃透明度」。这里原先写死 60/62，
+       导致阅读页顶底栏和目录抽屉不跟滑条走。夜读 +2 个百分点：
+       深底上的模糊更容易透出正文笔画。
+       [shuge] 基底必须用 surface 而不是 bg：玻璃盖在同色正文底上，
+       alpha 再怎么调视觉上也零变化（面板和页面融成一块）。
+       surface 与 bg 有一档明暗差，玻璃才「浮」得起来 */
+    const solid = Math.min(92, Math.max(8, 100 - settings.glassOpacity))
+    const alpha = night ? Math.min(92, solid + 2) : solid
+    vars['--glass-bg'] = `color-mix(in srgb, ${p.surface} ${alpha}%, transparent)`
     vars['--glass-line'] = night ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.7)'
     vars['--glass-highlight'] = night
       ? 'inset 0 1px 0 rgba(255,255,255,0.08)'
@@ -239,8 +246,10 @@ export const buildReaderCSS = (s: ReaderSettings, custom?: CustomFontRef | null)
        没指定的标题自然继承 body 的主题色。 */
     ${theme === 'night' ? `h1, h2, h3, h4, h5, h6 { color: ${p.text} !important; }` : ''}
 
-    /* 插图：约束进视口，避免分页时被切两半或撑破栏宽 */
-    img, svg, video, image {
+    /* 插图：约束进视口，避免分页时被切两半或撑破栏宽。
+       [shuge] audio 也一并约束：EPUB 3.3 核心媒体类型含 MP3/M4A/OPUS，
+       有些书的 <audio controls> 原生宽 300px，窄屏分栏下会溢出栏宽。 */
+    img, svg, video, audio, image {
       max-width: 100% !important;
       max-height: 88vh !important;
       height: auto !important;

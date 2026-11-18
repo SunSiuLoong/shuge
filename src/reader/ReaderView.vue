@@ -13,9 +13,9 @@ import {
 } from 'lucide-vue-next'
 import { getBook, getProgress, saveProgress, addBookmark, listBookmarks, patchBook, removeBookmark } from '../db'
 import type { Book, Bookmark as BookmarkRow, TocItem } from '../types'
-import { getBookFile } from '../storage/opfs'
+import { resolveBookFile } from '../storage/refs'
 import { navigate } from '../router'
-import { settings, readerTheme } from '../settings'
+import { settings, readerTheme, type FontKey, type ReaderSettings } from '../settings'
 import { FoliateAdapter, type RelocateInfo } from './adapter'
 import { buildReaderCSS, READER_PALETTES, readerVars, type CustomFontRef } from './theme'
 import { fontRefOf } from './fonts'
@@ -48,6 +48,15 @@ const dragging = ref(false)
 const slideValue = ref(0)
 
 const palette = computed(() => READER_PALETTES[readerTheme.value])
+/**
+ * 实际生效的字体：本书单独设过就用本书的（Readest 关掉 Global Settings 的语义），
+ * 否则走全局设置。
+ */
+const fontKey = computed<FontKey>(
+  () => ((book.value?.readerFont as FontKey | undefined) ?? settings.fontFamily),
+)
+/** 把生效字体套进设置副本，交给 buildReaderCSS 生成正文样式 */
+const cssSettings = computed<ReaderSettings>(() => ({ ...settings, fontFamily: fontKey.value }))
 /** 自定义字体的 family + blob 地址；切字体时重新解析，没导入过就是 null */
 const customFont = ref<CustomFontRef | null>(null)
 const percentText = computed(() => `${(fraction.value * 100).toFixed(1)}%`)
@@ -111,14 +120,35 @@ const applySettings = (): void => {
   a.setFlow(settings.flow)
   a.setMargin(settings.margin)
   a.setGap(4)
-  a.setStyles(buildReaderCSS(settings, customFont.value))
+  a.setStyles(buildReaderCSS(cssSettings.value, customFont.value))
 }
 
-/** 切到自定义字体时先把 font-face 与 blob 地址准备好，再重建 iframe 样式 */
-const syncFont = async (): Promise<void> => {
-  const key = settings.fontFamily
+/** 换字体要先解析出 blob 地址，再重建 iframe 样式（否则 css 里是空 url） */
+const resolveCustomFont = async (): Promise<void> => {
+  const key = fontKey.value
   customFont.value = key.startsWith('custom:') ? await fontRefOf(key) : null
+}
+
+const syncFont = async (): Promise<void> => {
+  await resolveCustomFont()
   applySettings()
+}
+
+/** 排版面板改了「仅本书」字体：同步内存里的书对象，正文才会立刻重排 */
+const onBookFont = (key?: string): void => {
+  if (!book.value) return
+  book.value = { ...book.value, readerFont: key }
+}
+
+/** 渲染器就绪后、首章渲染前把排版/配色全部注入，暗色模式首帧才不会白闪 */
+const primeRenderer = async (a: FoliateAdapter): Promise<void> => {
+  const rect = host.value?.getBoundingClientRect()
+  if (rect) a.setViewport(rect.width, rect.height)
+  a.setFlow(settings.flow)
+  a.setMargin(settings.margin)
+  a.setGap(4)
+  await resolveCustomFont()
+  a.setStyles(buildReaderCSS(cssSettings.value, customFont.value))
 }
 
 /** 屏幕旋转 / 地址栏收放都会改尺寸，需要重算分页宽度 */
@@ -138,10 +168,20 @@ const onRelocate = (info: RelocateInfo): void => {
   persist(info)
 }
 
-/** 当前章节对应的目录项：按标题匹配，比 href 归一化更稳 */
+/** 当前章节对应的目录项：按标题匹配，比 href 归一化更稳；目录是树，要递归找 */
 const currentHref = computed(() => {
   if (!chapterLabel.value) return ''
-  return toc.value.find((t) => t.label === chapterLabel.value)?.href ?? ''
+  const find = (items: TocItem[]): string => {
+    for (const t of items) {
+      if (t.label === chapterLabel.value) return t.href
+      if (t.children?.length) {
+        const hit = find(t.children)
+        if (hit) return hit
+      }
+    }
+    return ''
+  }
+  return find(toc.value)
 })
 
 /** 正文渲染在 iframe 里，点击不会冒泡到外层，需要对每个内容文档单独绑定 */
@@ -347,7 +387,7 @@ watch(
 
 /** 换字体要先解析出 blob 地址，再重建 iframe 样式（否则 css 里是空 url） */
 watch(
-  () => settings.fontFamily,
+  [() => settings.fontFamily, () => book.value?.readerFont],
   () => {
     void syncFont()
   },
@@ -393,7 +433,12 @@ onMounted(async () => {
       error.value = '书库里找不到这本书'
       return
     }
-    const file = await getBookFile(book.value.opfsPath)
+    // 引用模式（source='ref'）在这里按出处取原文件：OPFS 复制本走 getBookFile，
+    // 安卓 SAF uri / 桌面句柄走 resolveBookFile，失败给「重新导入」提示
+    const file = await resolveBookFile(book.value).catch(async (e) => {
+      if (book.value?.source === 'ref') throw e
+      return null
+    })
     if (!file) {
       error.value = '本地文件已丢失，请重新导入'
       await patchBook(props.bookId, { missing: true })
@@ -408,10 +453,13 @@ onMounted(async () => {
     const saved = await getProgress(props.bookId)
     const lastLocation = saved?.cfi || (saved?.fraction != null ? { fraction: saved.fraction } : undefined)
 
-    await a.open(file, lastLocation)
+    // openBook 只建渲染器；样式注入完成后才 init 渲染首章，
+    // 否则第一帧按 EPUB 默认白底画出来，暗色模式下会亮一下再变暗
+    await a.openBook(file)
+    await primeRenderer(a)
+    await a.init(lastLocation)
     toc.value = a.getToc()
     bookmarks.value = await listBookmarks(props.bookId)
-    await syncFont()
     bindContents()
     loading.value = false
     await patchBook(props.bookId, { lastOpenedAt: Date.now() })
@@ -498,7 +546,12 @@ onBeforeUnmount(() => {
             <Type :size="19" :stroke-width="1.7" />
             <span>排版</span>
           </button>
-          <button class="rtool" type="button" @click="showLinks = true; bumpChrome()">
+          <button
+            v-if="settings.showReview"
+            class="rtool"
+            type="button"
+            @click="showLinks = true; bumpChrome()"
+          >
             <MessageSquare :size="19" :stroke-width="1.7" />
             <span>书评</span>
           </button>
@@ -524,7 +577,12 @@ onBeforeUnmount(() => {
     </Transition>
 
     <Transition name="slide-down">
-      <SettingsSheet v-if="showSettings" @click.stop />
+      <SettingsSheet
+        v-if="showSettings"
+        :book="book"
+        @click.stop
+        @book-font="onBookFont"
+      />
     </Transition>
 
     <Transition name="slide-down">

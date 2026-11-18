@@ -9,6 +9,7 @@ import { requestPersist, listBookFiles, deleteBookFile } from './storage/opfs'
 import { db, patchBook } from './db'
 import { applyUpdate, initPWA, needRefresh, offlineReady } from './pwa'
 import { initUiStyle } from './ui/style'
+import InAppBrowser from './links/InAppBrowser.vue'
 
 // UI 风格（莫奈取色 / 液态玻璃）的副作用挂在这里，只在 App 挂载一次
 initUiStyle()
@@ -41,10 +42,15 @@ onMounted(() => {
 </script>
 
 <template>
-  <ShelfView v-if="route.name === 'shelf'" />
-  <ReaderView v-else-if="route.name === 'reader'" :key="route.id" :book-id="route.id" />
-  <SettingsView v-else-if="route.name === 'settings'" />
-  <AboutView v-else-if="route.name === 'about'" />
+  <!-- 书架 ⇄ 阅读页的转场：出去快（淡出），进来带一点缩放上浮，
+       参考 Lumi_Books 打开书时的容器过渡的简化版——不做封面形变，
+       但要有「进入另一层」的纵深而不是硬切 -->
+  <Transition name="page" mode="out-in">
+    <ShelfView v-if="route.name === 'shelf'" key="shelf" />
+    <ReaderView v-else-if="route.name === 'reader'" :key="`reader-${route.id}`" :book-id="route.id" />
+    <SettingsView v-else-if="route.name === 'settings'" key="settings" />
+    <AboutView v-else key="about" />
+  </Transition>
 
   <Transition name="fade">
     <button v-if="needRefresh" class="sw-toast" type="button" @click="applyUpdate">
@@ -55,6 +61,9 @@ onMounted(() => {
   <Transition name="fade">
     <div v-if="offlineReady" class="sw-toast sw-toast--plain">已可离线阅读</div>
   </Transition>
+
+  <!-- 网页端的内置浏览器（安卓走 Custom Tabs，不需要这一层） -->
+  <InAppBrowser />
 </template>
 
 <style scoped>

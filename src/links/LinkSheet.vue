@@ -1,13 +1,18 @@
 <script setup lang="ts">
 import { X } from 'lucide-vue-next'
 import { SITES, cleanTitle, searchUrl } from './sites'
-import { openExternal } from './open'
+import { openInApp } from './inapp'
 
 const props = defineProps<{ title: string; author?: string }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
-const pick = (key: string): void => {
-  openExternal(searchUrl(key, props.title, props.author))
+/** 不再跳系统浏览器：App 里是 Custom Tabs，网页端是内嵌层（见 links/inapp.ts） */
+const pick = (site: { key: string; name: string; embed?: boolean }): void => {
+  void openInApp(
+    searchUrl(site.key, props.title, props.author),
+    `${site.name} · ${cleanTitle(props.title)}`,
+    site.embed !== false,
+  )
   emit('close')
 }
 </script>
@@ -24,18 +29,21 @@ const pick = (key: string): void => {
       </button>
     </div>
     <div class="sheet__body">
-      <p class="link__sub">搜「{{ cleanTitle(title) }}」，在浏览器里打开</p>
+      <p class="link__sub">搜「{{ cleanTitle(title) }}」，在应用内打开，看完点关闭就回到书里</p>
       <button
         v-for="site in SITES"
         :key="site.key"
         class="opt"
         type="button"
-        @click="pick(site.key)"
+        @click="pick(site)"
       >
         <span class="opt__name">{{ site.name }}</span>
         <span class="opt__note">{{ site.note }}</span>
       </button>
-      <p class="link__foot">只做跳转。书评、评分归站点所有，本应用不抓取也不展示。</p>
+      <p class="link__foot">
+        书评、评分归站点所有，本应用不抓取也不展示。<br />
+        网页版里番茄、起点不允许被嵌入，这两个会直接用浏览器打开。
+      </p>
       </div>
     </div>
   </div>

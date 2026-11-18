@@ -11,8 +11,12 @@ const props = withDefaults(
     layout?: 'grid' | 'list'
     /** 是否在作者行右侧显示全书百分比 */
     showPercent?: boolean
+    /** 批量管理：显示勾选圈 */
+    selectMode?: boolean
+    /** 当前是否被勾选 */
+    selected?: boolean
   }>(),
-  { layout: 'grid', showPercent: false },
+  { layout: 'grid', showPercent: false, selectMode: false, selected: false },
 )
 
 const emit = defineEmits<{ (e: 'open', book: Book): void }>()
@@ -46,7 +50,13 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
 </script>
 
 <template>
-  <button class="card" :class="`card--${layout}`" type="button" @click="emit('open', book)">
+  <button
+    class="card"
+    :class="[`card--${layout}`, { 'is-selected': selected, 'is-selecting': selectMode }]"
+    type="button"
+    :aria-pressed="selectMode ? selected : undefined"
+    @click="emit('open', book)"
+  >
     <div class="card__cover">
       <img v-if="cover" :src="cover" :alt="book.title" loading="lazy" decoding="async" />
       <span v-else class="card__ph" :style="placeholderTone">{{ initial }}</span>
@@ -56,6 +66,21 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
         :title="book.ratingCount ? `${book.ratingCount} 人评价` : '评分'"
       >{{ rating }}</span>
       <span v-if="finished" class="card__done">已读完</span>
+      <!-- 引用模式：书在原位没复制进书库，给个低调的角标提醒用户别随意删原文件 -->
+      <span v-if="book.source === 'ref'" class="card__ref">引用</span>
+      <!-- 批量管理的勾选圈：压在封面右上角，不改变卡片布局 -->
+      <span v-if="selectMode" class="card__check" :class="{ 'is-on': selected }" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path
+            d="M20 6 9 17l-5-5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="3.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </span>
     </div>
 
     <div class="card__body">
@@ -190,6 +215,25 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
 }
 
 /* 评分压在封面左上角：白字压在书封上，任何底色都能看清 */
+.card__ref {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  padding: 2px 7px;
+  border-radius: 0 8px 0 10px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+}
+
+.card--list .card__ref {
+  border-radius: 999px 0 0 999px;
+  left: 0;
+}
+
 .card__rating {
   position: absolute;
   left: 6px;
@@ -204,6 +248,54 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
   text-align: center;
   color: #fff;
   background: #3d3832;
+}
+
+/* ---- 批量管理勾选 ---- */
+.card__check {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: transparent;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  border: 1.5px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(4px);
+  transition: background-color 140ms var(--ease), color 140ms var(--ease);
+}
+
+.card__check svg {
+  width: 13px;
+  height: 13px;
+}
+
+.card__check.is-on {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.card.is-selected .card__cover {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* 选择态下卡片不再做按压缩放：手指动作是在勾选，不是在打开书 */
+.card.is-selecting:active .card__cover {
+  transform: none;
+}
+
+.card.is-selecting .card__cover {
+  opacity: 0.92;
+}
+
+.card.is-selecting.is-selected .card__cover {
+  opacity: 1;
 }
 
 .card--list .card__rating {
