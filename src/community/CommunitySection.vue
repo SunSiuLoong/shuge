@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ChevronRight, Download, ExternalLink, Gift, Trash2 } from 'lucide-vue-next'
+import { ChevronRight, Download, ExternalLink, Trash2 } from 'lucide-vue-next'
 import { openInApp } from '../links/inapp'
 import {
   QM_BASE,
@@ -12,12 +12,10 @@ import {
 import { clearDownloadRecords, downloadState, startDownload } from './downloads'
 import ConfirmDialog from '../ui/ConfirmDialog.vue'
 
-const signBusy = ref(false)
+const dailyBusy = ref(false)
+const needLogin = ref(false)
 const signMsg = ref('')
-const signNeedLogin = ref(false)
-const taskBusy = ref(false)
 const taskMsg = ref('')
-const taskNeedLogin = ref(false)
 
 const SIGN_KEY = 'shuge.community.lastSign.v1'
 const lastSign = ref<string | null>(localStorage.getItem(SIGN_KEY))
@@ -37,44 +35,43 @@ const openLogin = (): void => {
   void openInApp(QM_BASE + '/member.php?mod=logging&action=login', `${QM_NAME} 登录`, false)
 }
 
-const onSign = async (): Promise<void> => {
-  signBusy.value = true
+/**
+ * 一键完成：先签到、再领威望，两步结果分两行显示。
+ * 开头先探一次登录态——没登录直接引导去登录，避免把「未登录」误报成「无任务」；
+ * 签到失败（比如今天已签）不拦着领威望，两件事互不影响。
+ */
+const onDaily = async (): Promise<void> => {
+  dailyBusy.value = true
   signMsg.value = ''
-  try {
-    const r = await doSign()
-    signMsg.value = r.message
-    signNeedLogin.value = !r.ok && /登录/.test(r.message)
-    if (r.ok && !/已经签/.test(r.message)) {
-      localStorage.setItem(SIGN_KEY, today())
-      lastSign.value = today()
-    }
-  } catch (e) {
-    signMsg.value = e instanceof Error ? e.message : '签到失败'
-    signNeedLogin.value = false
-  } finally {
-    signBusy.value = false
-  }
-}
-
-/** 进社区前先探一下登录态，避免把「未登录」误报成「无任务」 */
-const onClaim = async (): Promise<void> => {
-  taskBusy.value = true
   taskMsg.value = ''
   try {
     const st = await getSignState()
     if (!st.loggedIn) {
-      taskMsg.value = '还没登录，先去社区登录一次'
-      taskNeedLogin.value = true
+      signMsg.value = ''
+      taskMsg.value = st.message || '还没登录，先去社区登录一次'
+      needLogin.value = true
       return
     }
-    const r = await claimPrestigeTasks()
-    taskMsg.value = r.message
-    taskNeedLogin.value = false
-  } catch (e) {
-    taskMsg.value = e instanceof Error ? e.message : '领取失败'
-    taskNeedLogin.value = false
+    needLogin.value = false
+    try {
+      const r = await doSign()
+      signMsg.value = r.message
+      // 签到成功或「今天已经签过」都算今天签了——手动在浏览器签过也要亮「今日已签」
+      if (r.ok) {
+        localStorage.setItem(SIGN_KEY, today())
+        lastSign.value = today()
+      }
+    } catch (e) {
+      signMsg.value = e instanceof Error ? e.message : '签到失败'
+    }
+    try {
+      const r = await claimPrestigeTasks()
+      taskMsg.value = r.message
+    } catch (e) {
+      taskMsg.value = e instanceof Error ? e.message : '领取失败'
+    }
   } finally {
-    taskBusy.value = false
+    dailyBusy.value = false
   }
 }
 
@@ -102,6 +99,33 @@ const doClearDownloads = (): void => {
 
 <template>
   <section class="card">
+    <!-- 一键完成：签到 + 领威望 -->
+    <div class="row">
+      <span>
+        每日签到与威望
+        <span class="row__tag" :class="{ 'is-on': signedToday }">
+          {{ signedToday ? '今日已签' : '未签' }}
+        </span>
+      </span>
+      <button
+        class="action"
+        :class="{ 'is-done': signedToday }"
+        type="button"
+        :disabled="dailyBusy"
+        @click="needLogin ? openLogin() : onDaily()"
+      >
+        {{ needLogin ? '去登录' : dailyBusy ? '执行中…' : '一键完成' }}
+      </button>
+    </div>
+    <p class="hint hint--tight">
+      替你做两件事：签到（随机表情 + 随机古诗词）和领取任务页里的威望奖励。
+      {{ lastSign ? `上次签到：${lastSign}。` : '' }}
+    </p>
+    <p v-if="signMsg" class="result" :class="{ 'is-ok': !needLogin }">签到：{{ signMsg }}</p>
+    <p v-if="taskMsg" class="result" :class="{ 'is-ok': !needLogin }">威望：{{ taskMsg }}</p>
+
+    <div class="divider" />
+
     <!-- 打开社区 -->
     <button class="row row--btn" type="button" @click="openCommunity()">
       <span>打开{{ QM_NAME }}（社区）</span>
@@ -115,88 +139,46 @@ const doClearDownloads = (): void => {
       之后签到、领威望、搜索都会自动带上。没有账号就先去注册一个。
     </p>
 
-    <div class="divider" />
+    <!-- 下载记录：拿不到记录时整块隐藏 -->
+    <template v-if="downloadState.records.length">
+      <div class="divider" />
 
-    <!-- 一键签到 -->
-    <div class="row">
-      <span>
-        每日签到
-        <span class="row__tag" :class="{ 'is-on': signedToday }">
-          {{ signedToday ? '今日已签' : '未签' }}
+      <button class="row row--btn" type="button" @click="showDownloads = !showDownloads">
+        <span>
+          <span class="row__icon"><Download :size="14" :stroke-width="1.8" /></span>
+          下载记录
         </span>
-      </span>
+        <span class="row__value">
+          {{ downloadState.records.length }} 条
+          <ChevronRight class="chev" :class="{ open: showDownloads }" :size="14" :stroke-width="1.8" />
+        </span>
+      </button>
+      <p v-if="showDownloads" class="hint hint--tight">
+        在社区附件上点下载后走系统下载器（登录 Cookie 自动带上），
+        完成后可在系统通知栏查看。
+      </p>
+      <ul v-if="showDownloads" class="downloads">
+        <li v-for="r in downloadState.records" :key="r.id" class="downloads__item">
+          <button class="downloads__main" type="button" @click="onDownload(r.url, r.name)">
+            <span class="downloads__name">{{ r.name }}</span>
+            <span class="downloads__time">{{ timeOf(r.time) }}</span>
+          </button>
+          <button class="icon-btn icon-btn--sm" type="button" aria-label="重新下载" @click="onDownload(r.url, r.name)">
+            <ExternalLink :size="14" :stroke-width="1.8" />
+          </button>
+        </li>
+      </ul>
       <button
-        class="action"
-        :class="{ 'is-done': signedToday }"
+        v-if="showDownloads"
+        class="action action--ghost"
         type="button"
-        :disabled="signBusy"
-        @click="signNeedLogin ? openLogin() : onSign()"
+        @click="askClearDownloads = true"
       >
-        {{ signNeedLogin ? '去登录' : signBusy ? '签到中…' : signedToday ? '再签一次' : '一键签到' }}
+        <Trash2 :size="14" :stroke-width="1.8" />
+        清空记录
       </button>
-    </div>
-    <p class="hint hint--tight">
-      自动挑一个随机表情、配一句随机古诗词当签到语。
-      {{ lastSign ? `上次签到：${lastSign}。` : '' }}
-    </p>
-    <p v-if="signMsg" class="result" :class="{ 'is-ok': !signNeedLogin }">{{ signMsg }}</p>
-
-    <div class="divider" />
-
-    <!-- 领取威望 -->
-    <div class="row">
-      <span>
-        领取威望
-        <span class="row__icon"><Gift :size="14" :stroke-width="1.8" /></span>
-      </span>
-      <button class="action" type="button" :disabled="taskBusy" @click="taskNeedLogin ? openLogin() : onClaim()">
-        {{ taskNeedLogin ? '去登录' : taskBusy ? '领取中…' : '自动领取' }}
-      </button>
-    </div>
-    <p class="hint hint--tight">
-      相当于替你把社区任务页里的「申请任务 / 领取奖励」各点一遍。
-      有的任务有条件（发帖数、在线时长），满足不了会跳过。
-    </p>
-    <p v-if="taskMsg" class="result">{{ taskMsg }}</p>
-
-    <div class="divider" />
-
-    <!-- 下载记录 -->
-    <button class="row row--btn" type="button" @click="showDownloads = !showDownloads">
-      <span>
-        <span class="row__icon"><Download :size="14" :stroke-width="1.8" /></span>
-        下载记录
-      </span>
-      <span class="row__value">
-        {{ downloadState.records.length }} 条
-        <ChevronRight class="chev" :class="{ open: showDownloads }" :size="14" :stroke-width="1.8" />
-      </span>
-    </button>
-    <p v-if="showDownloads" class="hint hint--tight">
-      在社区附件上点下载后走系统下载器（登录 Cookie 自动带上），
-      完成后可在系统通知栏查看。
-    </p>
-    <ul v-if="showDownloads && downloadState.records.length" class="downloads">
-      <li v-for="r in downloadState.records" :key="r.id" class="downloads__item">
-        <button class="downloads__main" type="button" @click="onDownload(r.url, r.name)">
-          <span class="downloads__name">{{ r.name }}</span>
-          <span class="downloads__time">{{ timeOf(r.time) }}</span>
-        </button>
-        <button class="icon-btn icon-btn--sm" type="button" aria-label="重新下载" @click="onDownload(r.url, r.name)">
-          <ExternalLink :size="14" :stroke-width="1.8" />
-        </button>
-      </li>
-    </ul>
-    <button
-      v-if="showDownloads && downloadState.records.length"
-      class="action action--ghost"
-      type="button"
-      @click="askClearDownloads = true"
-    >
-      <Trash2 :size="14" :stroke-width="1.8" />
-      清空记录
-    </button>
-    <p v-if="dlMsg" class="result">{{ dlMsg }}</p>
+      <p v-if="dlMsg" class="result">{{ dlMsg }}</p>
+    </template>
   </section>
 
   <ConfirmDialog

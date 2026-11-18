@@ -21,7 +21,7 @@ interface CommunityHttpPlugin {
     method?: string
     body?: string
     contentType?: string
-  }): Promise<{ status: number; url: string; body: string }>
+  }): Promise<{ status: number; url: string; body: string; hasCookie?: boolean }>
   download(opts: { url: string; name?: string }): Promise<{ ok: boolean; id?: string }>
 }
 
@@ -31,6 +31,7 @@ export interface QmResponse {
   status: number
   url: string
   body: string
+  hasCookie?: boolean
 }
 
 /** GET 论坛页面；非原生环境直接抛错（fetch 过不了 CORS，装样子没意义） */
@@ -67,8 +68,16 @@ const stripTags = (s: string): string =>
 const formhashOf = (html: string): string | null =>
   /name="formhash"[^>]*value="([0-9a-fA-F]+)"/.exec(html)?.[1] ?? null
 
-/** 顶部导航有 logout 链接 = 已登录（游客页只有 login/register） */
-export const loggedInOf = (html: string): boolean => /action=logout/.test(html)
+/**
+ * 已登录判定。桌面模板的页面导航带 action=logout 链接，但手机版模板没有——
+ * 手机版对游客会直接显示「您还没有登录 / 请先登录」之类的提示页，
+ * 所以补一条：页面里没有游客提示就视为已登录（配合 space-uid 正向标记）。
+ */
+export const loggedInOf = (html: string): boolean => {
+  if (/action=logout/.test(html)) return true
+  if (/space-uid-\d+/.test(html)) return true
+  return !/您还没有登录|您尚未登录|请先登录|没有权限访问|登录后才能/.test(html)
+}
 
 /* ---------------- 签到 ---------------- */
 
@@ -91,6 +100,8 @@ export interface SignState {
   formhash: string | null
   emotions: QmEmotion[]
   message: string
+  /** 临时诊断用：原始页面 */
+  rawBody?: string
 }
 
 export const getSignState = async (): Promise<SignState> => {
@@ -99,15 +110,20 @@ export const getSignState = async (): Promise<SignState> => {
   if (!loggedIn) {
     return { ok: false, loggedIn: false, signed: false, formhash: null, emotions: [], message: '还没登录，先在社区里登录一次' }
   }
-  const signed = /已经签到|今日已签|已连续签到/.test(r.body)
+  const signed = /已经签到|今日已签|签到时间还未开始|签到过了/.test(r.body)
   const formhash = formhashOf(r.body)
   const emotions: QmEmotion[] = []
-  const re = /name="qdxq"[^>]*value="([a-z0-9_]+)"[^>]*>\s*(?:<[^>]*>)*<img[^>]*alt="([^"]*)"/g
+  // dsu_paulsign 的选项是 <input type="radio" name="qdxq" value="kx" ...> <img alt="开心">，
+  // input 和 img 之间隔几个标签、顺序也可能反过来，所以按位置往后找最近的 alt
+  const re = /name="qdxq"[^>]*value="([a-z0-9_]+)"/g
   let m: RegExpExecArray | null
   while ((m = re.exec(r.body))) {
-    if (!emotions.some((e) => e.key === m![1])) emotions.push({ key: m[1], label: m[2] || m[1] })
+    if (emotions.some((e) => e.key === m![1])) continue
+    const after = r.body.slice(re.lastIndex, re.lastIndex + 400)
+    const alt = /alt="([^"]+)"/.exec(after)?.[1]
+    emotions.push({ key: m[1], label: alt || m[1] })
   }
-  return { ok: true, loggedIn: true, signed, formhash, emotions, message: '' }
+  return { ok: true, loggedIn: true, signed, formhash, emotions, message: '', rawBody: r.body }
 }
 
 export interface SignOutcome {
@@ -118,12 +134,22 @@ export interface SignOutcome {
 /**
  * 一键签到：随机表情 + 随机古诗词一句话。
  * 表情从签到页解析到的 qdxq 选项里随机挑；解析不到就退标准集。
+ *
+ * 提交字段按 dsu_paulsign 的表单来（对照插件源码与真站签到页）：
+ * qdmode=1（说一句话模式）、qdxq=心情、todaysay=想说的话、fastreply=0。
+ * 站点限制 todaysay 最少 2 个、最多 30 个中文字符——诗词原句超长就截断，
+ * 短于 2 就垫两个字。
  */
 export const doSign = async (): Promise<SignOutcome> => {
   const state = await getSignState()
   if (!state.ok) return { ok: false, message: state.message }
-  if (!state.formhash) return { ok: false, message: '拿不到表单令牌（formhash），站点结构可能变了' }
+  // 先判「已签」再判 formhash：已签结果页没有表单，拿不到令牌是正常的
   if (state.signed) return { ok: true, message: '今天已经签过啦' }
+  if (!state.formhash) {
+    // 临时诊断：手机版签到页结构待核对，带上页面片段定位
+    const snippet = stripTags(state.rawBody ?? '').replace(/\s+/g, ' ').slice(0, 100)
+    return { ok: false, message: `拿不到表单令牌（formhash）(${snippet})` }
+  }
 
   const pool = state.emotions.length
     ? state.emotions
@@ -131,20 +157,30 @@ export const doSign = async (): Promise<SignOutcome> => {
   const emotion = pool[Math.floor(Math.random() * pool.length)]
   const { randomPoem } = await import('./poems')
   const poem = randomPoem()
+  let mood = poem.text.slice(0, 30)
+  while ([...mood].length < 2) mood += '…'
 
   const body = new URLSearchParams({
     formhash: state.formhash,
+    qdmode: '1',
     qdxq: emotion.key,
-    qdcontent: `${poem.text}`,
+    fastreply: '0',
+    todaysay: mood,
   }).toString()
-  const r = await qmPost('/plugin.php?id=dsu_paulsign:sign&operation=qiandao', body)
-  if (/签到成功|已签到|已选心情|您今日已签到|打卡成功/.test(r.body)) {
+  const r = await qmPost(
+    '/plugin.php?id=dsu_paulsign:sign&operation=qiandao&infloat=0&inajax=0',
+    body,
+  )
+  if (/签到成功|打卡成功/.test(r.body)) {
     return {
       ok: true,
-      message: `签到成功 ${emotion.label}｜${poem.text}（${poem.author}）`,
+      message: `签到成功 ${emotion.label}｜${mood}（${poem.author}）`,
     }
   }
-  if (loggedInOf(r.body) && !/登录/.test(r.body.slice(0, 400))) {
+  if (/已经签到|今日已签|签到时间还未开始/.test(r.body)) {
+    return { ok: true, message: '今天已经签过啦' }
+  }
+  if (loggedInOf(r.body)) {
     return { ok: false, message: '提交了，但没看到成功标记，去社区页面确认一下' }
   }
   return { ok: false, message: '签到失败：可能需要先在社区里重新登录' }
@@ -160,44 +196,49 @@ export interface TaskClaimResult {
 }
 
 /**
- * 领取威望：正常流程是在社区「任务」页逐个点申请/领取。这里自动做一遍：
- * 先把可申请的任务都申请了，再把可领取的任务都领了。
+ * 领取威望：手机版任务每天自动完成，只差「领取」这一步——
+ * 这里替用户把任务页里所有「领取奖励」链接点一遍。
+ * 领完再抓一次任务页兜底（有任务领取后立刻又出现下一个可领项）。
  */
 export const claimPrestigeTasks = async (): Promise<TaskClaimResult> => {
-  const r = await qmGet('/home.php?mod=task')
-  if (!loggedInOf(r.body)) {
+  const first = await qmGet('/home.php?mod=task')
+  if (!loggedInOf(first.body)) {
     return { ok: false, applied: 0, drawn: 0, message: '还没登录，先在社区里登录一次' }
   }
-  const applyIds = new Set<string>()
-  const drawIds = new Set<string>()
-  const reApply = /home\.php\?mod=task&do=apply&id=(\d+)/g
-  const reDraw = /home\.php\?mod=task&do=draw&id=(\d+)/g
-  let m: RegExpExecArray | null
-  while ((m = reApply.exec(r.body))) applyIds.add(m[1])
-  while ((m = reDraw.exec(r.body))) drawIds.add(m[1])
-
-  let applied = 0
   let drawn = 0
-  for (const id of applyIds) {
-    try {
-      const res = await qmGet(`/home.php?mod=task&do=apply&id=${id}`)
-      if (!/失败|不能|已申请|积分不足|需要/.test(res.body) || /成功|领取/.test(res.body)) applied++
-    } catch {
-      /* 单个任务失败不影响其它 */
+
+  const drawRound = async (html: string): Promise<number> => {
+    const ids = new Set<string>()
+    const reDraw = /home\.php\?mod=task&do=draw&id=(\d+)/g
+    let m: RegExpExecArray | null
+    let n = 0
+    while ((m = reDraw.exec(html))) ids.add(m[1])
+    for (const id of ids) {
+      try {
+        const res = await qmGet(`/home.php?mod=task&do=draw&id=${id}`)
+        if (/成功|奖励|获得|威望|红包|恭喜/.test(res.body)) n++
+      } catch {
+        /* 单个任务失败不影响其它 */
+      }
+    }
+    return n
+  }
+
+  drawn += await drawRound(first.body)
+  const again = await qmGet('/home.php?mod=task')
+  if (loggedInOf(again.body)) {
+    drawn += await drawRound(again.body)
+  }
+
+  if (!drawn) {
+    return {
+      ok: false,
+      applied: 0,
+      drawn,
+      message: '没有可领取的任务：可能今天已领过，或任务还没自动完成',
     }
   }
-  for (const id of drawIds) {
-    try {
-      const res = await qmGet(`/home.php?mod=task&do=draw&id=${id}`)
-      if (/成功|奖励|获得|威望/.test(res.body)) drawn++
-    } catch {
-      /* 忽略 */
-    }
-  }
-  if (!applied && !drawn) {
-    return { ok: false, applied, drawn, message: '现在没有可申请或可领取的任务' }
-  }
-  return { ok: true, applied, drawn, message: `申请 ${applied} 项、领取 ${drawn} 项任务奖励` }
+  return { ok: true, applied: 0, drawn, message: `领取了 ${drawn} 项任务奖励` }
 }
 
 /* ---------------- 社区搜索 ---------------- */

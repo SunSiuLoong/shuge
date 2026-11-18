@@ -1,0 +1,542 @@
+/* ============ UI 风格：M3 Expressive（原生） ============
+   [m3e] 按 Material 3 Expressive 重做「原生」外观，覆盖全应用：
+   书架、搜索、导入、阅读页工具条、阅读选项面板、目录抽屉、
+   设置页两级、对话框、提示条。
+
+   三条硬规矩（和上一版 MD3 的区别都在这）：
+   1. 层次靠容器色（surface-container-low → highest），不靠阴影；
+      Expressive 的彩色层次来自 primary / secondary / tertiary 三个容器。
+   2. 形状分档：chip 8、卡片 16、面板与对话框 28、按钮与开关全圆。
+   3. 动效走弹簧曲线，按压给状态层（state layer）而不是换色块。
+
+   颜色角色全部由 ui/monet.ts 的 md3Roles 按取色源生成，
+   这里只负责「哪个元素用哪个角色」。
+
+   写法约定：一律「属性前缀 + 双写类名」，因为组件 scoped 样式是
+   `.类名[data-v-xxx]`（优先级 0,2,0），单写类名会被同优先级的
+   scoped 规则按注入顺序压掉。双写后 0,3,0 稳定胜出。 */
+
+[data-style='monet'] {
+  /* 形状档位 */
+  --m3-xs: 8px;
+  --m3-sm: 12px;
+  --m3-md: 16px;
+  --m3-lg: 20px;
+  --m3-xl: 28px;
+  --m3-full: 999px;
+
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 28px;
+
+  /* 动效：标准缓入缓出 + 弹性；Expressive 的入场带一点过冲 */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --ease-spring: cubic-bezier(0.34, 1.32, 0.6, 1);
+  --dur: 220ms;
+
+  /* 状态层：按压/悬停统一用主色 10%，不另造颜色 */
+  --m3-state: color-mix(in srgb, var(--md-primary) 12%, transparent);
+  --m3-state-weak: color-mix(in srgb, var(--md-primary) 7%, transparent);
+  --shadow-card: none;
+}
+
+[data-style='monet'][data-scheme='dark'] {
+  --m3-state: color-mix(in srgb, var(--md-primary) 18%, transparent);
+  --m3-state-weak: color-mix(in srgb, var(--md-primary) 10%, transparent);
+  /* 深色下 primary 更亮，压在上面的字换深字 */
+  --on-accent: #10130e;
+}
+
+/* 平铺底色：M3 不做大面积晕染，层次交给容器色 */
+[data-style='monet'] body {
+  background-image: none;
+}
+
+/* ============ 顶栏（top app bar） ============ */
+[data-style='monet'] .topbar.topbar {
+  background: var(--bg);
+  backdrop-filter: none;
+  border-bottom-color: transparent;
+}
+
+[data-style='monet'] .topbar.topbar.scrolled {
+  background: var(--md-surface-container, var(--surface-2));
+  border-bottom-color: transparent;
+  box-shadow: none;
+}
+
+[data-style='monet'] .topbar__title.topbar__title {
+  font-family: var(--font-ui);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* 品牌题字：Expressive 用无衬线中粗 */
+[data-style='monet'] .title--brand.title--brand {
+  font-family: var(--font-ui);
+  letter-spacing: 0;
+  font-weight: 600;
+}
+
+[data-style='monet'] .icon-btn.icon-btn {
+  border-radius: var(--m3-full);
+  transition: background-color var(--dur) var(--ease), transform 160ms var(--ease-spring);
+}
+
+[data-style='monet'] .icon-btn.icon-btn:active {
+  background: var(--m3-state);
+  transform: scale(0.94);
+}
+
+/* 顶栏工具浮块：容器色药丸，去掉投影 */
+[data-style='monet'] .topbar__tools.topbar__tools {
+  --tools-bg: var(--md-surface-container-high, var(--surface-2));
+  --tools-line: transparent;
+  --tools-shadow: none;
+  --tools-blur: none;
+  border-radius: var(--m3-full);
+}
+
+/* ============ 顶部标签页（secondary tabs） ============ */
+[data-style='monet'] .tab.tab {
+  border: 0;
+  border-radius: var(--m3-full);
+  color: var(--text-2);
+  background: transparent;
+  font-weight: 500;
+}
+
+[data-style='monet'] .tab.tab .tab__label {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+[data-style='monet'] .tab.tab.is-active {
+  background: var(--md-secondary-container, var(--accent-soft));
+  color: var(--md-on-secondary-container, var(--text));
+  font-weight: 600;
+  box-shadow: none;
+}
+
+[data-style='monet'] .tab.tab .tab__count {
+  color: inherit;
+  opacity: 0.7;
+}
+
+/* ============ 书卡（filled card） ============ */
+[data-style='monet'] .card.card {
+  background: var(--md-surface-container-low, var(--surface));
+  border-radius: var(--m3-md);
+  border: 0;
+  box-shadow: none;
+}
+
+[data-style='monet'] .card.card:active {
+  background: var(--md-surface-container, var(--surface-2));
+}
+
+[data-style='monet'] .card__cover.card__cover {
+  border-radius: var(--m3-md);
+  box-shadow: 0 8px 20px -18px var(--md-primary, var(--accent));
+}
+
+[data-style='monet'] .card__title.card__title {
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+[data-style='monet'] .card__tag.card__tag,
+[data-style='monet'] .card__tag--more.card__tag--more {
+  border-radius: var(--m3-xs);
+  border: 1px solid var(--md-outline-variant, var(--line));
+  color: var(--text-2);
+}
+
+[data-style='monet'] .card.card.is-selected .card__cover,
+[data-style='monet'] .card.card.is-on .card__cover {
+  outline: 2px solid var(--md-primary, var(--accent));
+  outline-offset: 1px;
+}
+
+/* ============ 主按钮：FAB（primary container，16dp 圆角） ============ */
+[data-style='monet'] .fab.fab,
+[data-style='monet'] .empty__btn.empty__btn {
+  --fab-bg: var(--md-primary-container, var(--accent));
+  --fab-fg: var(--md-on-primary-container, var(--on-accent));
+  --fab-line: transparent;
+  --fab-shadow: none;
+  --fab-blur: none;
+  border-radius: var(--m3-md);
+  transition: transform 180ms var(--ease-spring), background-color var(--dur) var(--ease);
+}
+
+[data-style='monet'] .fab.fab:active,
+[data-style='monet'] .empty__btn.empty__btn:active {
+  transform: scale(0.94);
+}
+
+/* ============ 搜索条（M3 search bar：整条胶囊 + 容器色） ============ */
+[data-style='monet'] .searchbar.searchbar {
+  background: var(--md-surface-container-high, var(--surface-2));
+  border: 0;
+  border-radius: var(--m3-full);
+}
+
+[data-style='monet'] .searchbar__scope.searchbar__scope,
+[data-style='monet'] .searchhint.searchhint {
+  border-radius: var(--m3-xs);
+  border: 1px solid var(--md-outline-variant, var(--line));
+  color: var(--text-2);
+}
+
+[data-style='monet'] .searchbar__scope.searchbar__scope.is-active {
+  background: var(--md-secondary-container, var(--accent-soft));
+  color: var(--md-on-secondary-container, var(--text));
+  border-color: transparent;
+  font-weight: 600;
+}
+
+/* ============ 底部统计浮块 ============ */
+[data-style='monet'] .shelf__foot.shelf__foot {
+  background: var(--md-surface-container-high, var(--surface-2));
+  border: 0;
+  border-radius: var(--m3-full);
+  box-shadow: none;
+}
+
+/* ============ 面板（bottom sheet，28dp 顶圆角） ============ */
+[data-style='monet'] .sheet.sheet {
+  background: var(--md-surface-container-low, var(--surface));
+  border: 0;
+  border-radius: var(--m3-xl) var(--m3-xl) 0 0;
+  box-shadow: none;
+}
+
+[data-style='monet'] .sheet__handle.sheet__handle {
+  width: 32px;
+  height: 4px;
+  border-radius: var(--m3-full);
+  background: var(--md-outline-variant, var(--line));
+}
+
+[data-style='monet'] .sheet__head.sheet__head {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* ============ 对话框（28dp 圆角，high 容器） ============ */
+[data-style='monet'] .dlg.dlg {
+  background: var(--md-surface-container-high, var(--surface));
+  border-radius: var(--m3-xl);
+  box-shadow: 0 24px 60px -28px rgba(0, 0, 0, 0.45);
+}
+
+[data-style='monet'] .dlg__title.dlg__title {
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+[data-style='monet'] .btn.btn {
+  border-radius: var(--m3-full);
+  font-weight: 600;
+  min-height: 40px;
+}
+
+[data-style='monet'] .btn.btn--primary {
+  background: var(--md-primary, var(--accent));
+  color: var(--on-accent);
+}
+
+[data-style='monet'] .btn.btn--danger {
+  color: var(--md-error, #b3261e);
+}
+
+[data-style='monet'] .dlg__actions .btn.btn:not(.btn--primary):not(.btn--danger) {
+  color: var(--md-primary, var(--accent));
+}
+
+/* ============ 设置页 ============ */
+[data-style='monet'] .cat__name.cat__name {
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* 列表行：按压给状态层 */
+[data-style='monet'] .row.row {
+  border-radius: var(--m3-sm);
+  min-height: 52px;
+  transition: background-color 140ms var(--ease);
+}
+
+[data-style='monet'] .row.row--btn:active,
+[data-style='monet'] .row.row--switch:active {
+  background: var(--m3-state-weak);
+}
+
+[data-style='monet'] .row__label.row__label {
+  color: var(--text-2);
+}
+
+[data-style='monet'] .seg.seg {
+  background: transparent;
+  border: 1px solid var(--md-outline, var(--line));
+  border-radius: var(--m3-full);
+  padding: 3px;
+  gap: 2px;
+}
+
+[data-style='monet'] .seg.seg .seg__item {
+  border: 0;
+  border-radius: var(--m3-full);
+  color: var(--text-2);
+  font-weight: 500;
+  min-height: 36px;
+}
+
+[data-style='monet'] .seg.seg .seg__item.is-active {
+  background: var(--md-secondary-container, var(--accent-soft));
+  color: var(--md-on-secondary-container, var(--text));
+  font-weight: 600;
+  box-shadow: none;
+}
+
+[data-style='monet'] .chip.chip {
+  border-radius: var(--m3-xs);
+  border: 1px solid var(--md-outline-variant, var(--line));
+  background: transparent;
+  color: var(--text-2);
+  min-height: 32px;
+  font-weight: 500;
+}
+
+[data-style='monet'] .chip.chip.is-active {
+  background: var(--md-secondary-container, var(--accent-soft));
+  color: var(--md-on-secondary-container, var(--text));
+  border-color: transparent;
+  font-weight: 600;
+}
+
+/* 原生 checkbox → M3 开关 */
+[data-style='monet'] .toggle.toggle {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  width: 52px;
+  height: 32px;
+  border-radius: var(--m3-full);
+  border: 2px solid var(--md-outline, var(--text-2));
+  background: transparent;
+  position: relative;
+  transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+[data-style='monet'] .toggle.toggle::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--md-outline, var(--text-2));
+  transform: translateY(-50%);
+  transition: left 220ms var(--ease-spring), width 220ms var(--ease-spring),
+    height 220ms var(--ease-spring), background-color var(--dur) var(--ease);
+}
+
+[data-style='monet'] .toggle.toggle:checked {
+  background: var(--md-primary, var(--accent));
+  border-color: transparent;
+}
+
+[data-style='monet'] .toggle.toggle:checked::before {
+  left: 22px;
+  width: 24px;
+  height: 24px;
+  background: var(--on-accent);
+}
+
+/* 阅读选项面板里的自绘开关（.switch） */
+[data-style='monet'] .switch.switch {
+  width: 52px;
+  height: 32px;
+  border-radius: var(--m3-full);
+  background: var(--md-surface-container-highest, var(--surface-2));
+  outline: 2px solid var(--md-outline, var(--text-2));
+  outline-offset: -2px;
+}
+
+[data-style='monet'] .switch.switch i {
+  top: 4px;
+  left: 4px;
+  width: 24px;
+  height: 24px;
+  background: var(--md-outline, var(--text-2));
+  box-shadow: none;
+  transition: transform 220ms var(--ease-spring), background-color var(--dur) var(--ease);
+}
+
+[data-style='monet'] .switch.switch.is-on {
+  background: var(--md-primary, var(--accent));
+  outline-color: transparent;
+}
+
+[data-style='monet'] .switch.switch.is-on i {
+  background: var(--on-accent);
+  transform: translateX(20px);
+}
+
+/* 步进器：容器色药丸 */
+[data-style='monet'] .stepper.stepper {
+  border: 0;
+  border-radius: var(--m3-full);
+  background: var(--md-surface-container-high, var(--surface-2));
+  color: var(--text);
+}
+
+[data-style='monet'] .stepper.stepper:active {
+  background: var(--md-surface-container-highest, var(--surface-2));
+}
+
+/* 滑块 */
+[data-style='monet'] .slider.slider {
+  accent-color: var(--md-primary, var(--accent));
+}
+
+[data-style='monet'] .slider__val.slider__val {
+  color: var(--md-primary, var(--accent));
+  font-weight: 600;
+}
+
+/* 色板与主题点：选中给一圈主色描边 */
+[data-style='monet'] .swatch__chip.swatch__chip {
+  border-radius: var(--m3-sm);
+  border-color: var(--md-outline-variant, var(--line));
+}
+
+[data-style='monet'] .theme__dot.theme__dot {
+  border-radius: var(--m3-full);
+  box-shadow: 0 0 0 1px var(--md-outline-variant, var(--line));
+}
+
+/* 字段与输入 */
+[data-style='monet'] .field__input.field__input,
+[data-style='monet'] .picker__btn.picker__btn {
+  background: var(--md-surface-container-high, var(--surface-2));
+  border: 1px solid transparent;
+  border-radius: var(--m3-sm);
+  color: var(--text);
+}
+
+[data-style='monet'] .field__input.field__input:focus {
+  outline: 2px solid var(--md-primary, var(--accent));
+  outline-offset: -2px;
+}
+
+[data-style='monet'] .divider.divider {
+  background: var(--md-outline-variant, var(--line));
+  opacity: 0.6;
+}
+
+/* 小节眉标 / 说明文字 */
+[data-style='monet'] .eyebrow.eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--md-primary, var(--text-2));
+  font-weight: 600;
+}
+
+[data-style='monet'] .hint.hint,
+[data-style='monet'] .note.note,
+[data-style='monet'] .sub.sub {
+  color: var(--text-3);
+}
+
+/* ============ 阅读页：工具条 / 目录抽屉 ============
+   注意：正文区域的纸色（纸白/宣纸/护眼/夜读）由 reader/theme.ts 注入，
+   这里只动栏与抽屉，绝不改 .reader 的底色与字色。 */
+[data-style='monet'] .rbar.rbar {
+  background: color-mix(in srgb, var(--md-surface-container-high, var(--surface)) 92%, transparent);
+  backdrop-filter: blur(14px);
+  border: 0;
+}
+
+[data-style='monet'] .rbtn.rbtn {
+  border-radius: var(--m3-full);
+}
+
+[data-style='monet'] .rbtn.rbtn:active {
+  background: var(--m3-state);
+}
+
+[data-style='monet'] .rnav.rnav,
+[data-style='monet'] .rtool.rtool {
+  border-radius: var(--m3-full);
+}
+
+[data-style='monet'] .rbar__progress.rbar__progress {
+  /* 只统一形状；颜色跟阅读配色走（正文区有自己的一套 --accent） */
+  border-radius: var(--m3-full);
+}
+
+[data-style='monet'] .toc.toc {
+  background: var(--md-surface-container-low, var(--surface));
+  border-left: 0;
+  border-radius: var(--m3-lg) 0 0 var(--m3-lg);
+}
+
+[data-style='monet'] .toc__row.toc__row {
+  border-radius: var(--m3-sm);
+}
+
+[data-style='monet'] .toc__row.toc__row.is-active {
+  background: var(--md-secondary-container, var(--accent-soft));
+  color: var(--md-on-secondary-container, var(--text));
+}
+
+/* ============ 反色面：提示条 / 批量操作栏 ============ */
+[data-style='monet'] .toast.toast {
+  background: var(--md-inverse-surface, var(--text));
+  color: var(--md-inverse-on-surface, var(--bg));
+  border-radius: var(--m3-full);
+  box-shadow: none;
+}
+
+[data-style='monet'] .batchbar.batchbar {
+  background: var(--md-surface-container-high, var(--surface));
+  border-radius: var(--m3-xl);
+  box-shadow: 0 16px 40px -24px rgba(0, 0, 0, 0.5);
+}
+
+[data-style='monet'] .batchbar__btn--danger.batchbar__btn--danger {
+  color: var(--md-error, #b3261e);
+}
+
+[data-style='monet'] .importing.importing {
+  background: var(--md-surface-container-low, var(--surface));
+  border: 0;
+  border-radius: var(--m3-md);
+}
+
+[data-style='monet'] .importing__bar.importing__bar {
+  background: var(--md-surface-container-highest, var(--surface-2));
+}
+
+/* ============ 动效：面板与页面的弹性入场 ============ */
+[data-style='monet'] .slide-up-enter-active,
+[data-style='monet'] .slide-up-leave-active {
+  transition: transform 320ms var(--ease-spring), opacity 220ms var(--ease);
+}
+
+[data-style='monet'] .slide-down-enter-active,
+[data-style='monet'] .slide-down-leave-active {
+  transition: transform 320ms var(--ease-spring);
+}
+
+[data-style='monet'] .page-enter-active {
+  transition: opacity 240ms var(--ease), transform 320ms var(--ease-spring);
+}

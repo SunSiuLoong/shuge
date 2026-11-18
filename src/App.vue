@@ -10,6 +10,7 @@ import { db, patchBook } from './db'
 import { applyUpdate, initPWA, needRefresh, offlineReady } from './pwa'
 import { initUiStyle } from './ui/style'
 import InAppBrowser from './links/InAppBrowser.vue'
+import { autoImportFromFolder } from './storage/folderWatch'
 
 // UI 风格（莫奈取色 / 液态玻璃）的副作用挂在这里，只在 App 挂载一次
 initUiStyle()
@@ -38,6 +39,13 @@ onMounted(() => {
   initPWA()
   void requestPersist()
   void reconcile()
+  /* [shuge] 文件夹自动导入：安卓没有后台文件监听，只能在启动后补扫一次
+     （延后 4 秒，让首屏和索引先跑完），另外切回前台时再补一次。
+     内部有 5 分钟节流与开关判断，没开就不会动。 */
+  window.setTimeout(() => void autoImportFromFolder(), 4000)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void autoImportFromFolder()
+  })
 })
 </script>
 

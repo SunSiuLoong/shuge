@@ -26,9 +26,77 @@ import MetaSection from './MetaSection.vue'
 import AboutSection from './AboutSection.vue'
 import CommunitySection from '../community/CommunitySection.vue'
 import { useSwipe } from '../ui/swipe'
+import { isNative } from '../native'
+import { formatBytes } from '../storage/opfs'
+import { changeWatchedFolder, importScanned, scanWatched } from '../storage/folderWatch'
+import type { ScannedFile } from '../storage/refs'
 
 const imageInput = ref<HTMLInputElement | null>(null)
 const appliedHex = ref(currentAccentHex() ?? settings.monetHex)
+
+/* ---- 扫描文件夹：授权一个目录，列出里面的 EPUB 供勾选导入 ----
+   去重靠书库里已登记的 refUri（见 storage/folderWatch.ts），不靠时间戳快照 */
+const scanAll = ref(0)
+const scanFresh = ref<ScannedFile[]>([])
+const picked = ref<string[]>([])
+const scanBusy = ref(false)
+const scanMsg = ref('')
+const importMsg = ref('')
+
+const fmtTime = (ts: number): string => {
+  if (!ts) return ''
+  const d = new Date(ts)
+  const p = (n: number): string => String(n).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/** change=true 表示换文件夹：先忘掉旧授权，系统会重新弹目录选择器 */
+const runScan = async (change = false): Promise<void> => {
+  if (scanBusy.value) return
+  scanBusy.value = true
+  scanMsg.value = ''
+  importMsg.value = ''
+  try {
+    const r = change ? await changeWatchedFolder() : await scanWatched()
+    scanAll.value = r.all.length
+    scanFresh.value = r.fresh
+    picked.value = r.fresh.map((f) => f.uri) // 默认全选新书，用户可取消
+    if (!r.folder) scanMsg.value = '没有选择文件夹'
+    else if (!r.all.length)
+      scanMsg.value = '这个文件夹里没找到 EPUB；如果确实有书，可能是授权失效，点「换文件夹」重选'
+    else if (!r.fresh.length) scanMsg.value = '都导入过了，没有新书'
+  } catch (e) {
+    scanAll.value = 0
+    scanFresh.value = []
+    picked.value = []
+    scanMsg.value = e instanceof Error ? e.message : '扫描失败'
+  } finally {
+    scanBusy.value = false
+  }
+}
+
+const importPicked = async (): Promise<void> => {
+  if (scanBusy.value || !picked.value.length) return
+  scanBusy.value = true
+  importMsg.value = ''
+  try {
+    const sel = scanFresh.value.filter((f) => picked.value.includes(f.uri))
+    const r = await importScanned(sel)
+    const parts = [`导入 ${r.added} 本`]
+    if (r.duplicate) parts.push(`${r.duplicate} 本重复已跳过`)
+    if (r.failed) parts.push(`${r.failed} 本失败`)
+    importMsg.value = parts.join('，')
+    // 导完重扫一遍：列表里只剩真正没进库的
+    const again = await scanWatched()
+    scanAll.value = again.all.length
+    scanFresh.value = again.fresh
+    picked.value = again.fresh.map((f) => f.uri)
+  } catch (e) {
+    importMsg.value = e instanceof Error ? e.message : '导入失败'
+  } finally {
+    scanBusy.value = false
+  }
+}
 
 /** 设置页二级分类。第一层只列这些名字，点进去才展开该类的参数 */
 const SECTIONS = [
@@ -72,7 +140,8 @@ const themes = Object.keys(THEME_LABELS) as ThemeKey[]
 const schemes = Object.keys(SCHEME_LABELS) as SchemeKey[]
 /* [shuge] 外观只放出「原生」：极简（默认）与液态玻璃（开发中）在设置里收起，
    代码与主题层全部保留，随时可以重新开放 */
-const styles: UiStyleKey[] = ['monet']
+/* [houmo] 「极简」重做成厚墨/轻墨风后放出来，与「原生」并列可选 */
+const styles: UiStyleKey[] = ['classic', 'monet']
 const monetSources = Object.keys(MONET_SOURCE_LABELS) as MonetSource[]
 const columns = [2, 3, 4]
 
@@ -172,7 +241,10 @@ onMounted(syncApplied)
       <h1 class="topbar__title">{{ section ? sectionLabel : '设置' }}</h1>
     </header>
 
-    <Transition :name="navDir === 'fwd' ? 'setfwd' : 'setback'" mode="out-in" @after-enter="resetScroll">
+    <!-- 两级之间做交叉淡入：**不能**用 mode="out-in"，那会让旧页先退干净、
+         中间留一帧空白，整块设置区看起来就是在闪。两个滚动层叠在 stage 里 -->
+    <div class="settings__stage">
+    <Transition :name="navDir === 'fwd' ? 'setfwd' : 'setback'" @after-enter="resetScroll">
       <!-- 第一层：只列分类名 -->
       <div v-if="!section" key="list" ref="scrollEl" class="settings__scroll scroll-y">
       <nav class="card cats">
@@ -225,7 +297,7 @@ onMounted(syncApplied)
             </button>
           </div>
           <p class="hint hint--tight">
-            「极简」与「液态玻璃（开发中）」暂时收起，代码都在；恢复默认设置会回到极简。
+            极简＝纯白纸面、细线分层；原生＝按系统壁纸取色（Material You）。液态玻璃暂时收起，代码还在。
           </p>
 
           <!-- 液态玻璃专属：通透度滑条（参考 Kyant0/AndroidLiquidGlass 的
@@ -417,6 +489,99 @@ onMounted(syncApplied)
             </button>
           </div>
         </section>
+
+        <!-- 扫描文件夹：选一个目录，列出里面的 EPUB 勾选导入；可选新书自动导入 -->
+        <section class="card">
+          <p class="sub">扫描文件夹</p>
+
+          <template v-if="isNative">
+            <div class="row">
+              <span>电子书文件夹</span>
+              <span class="row__value fold__path">{{ settings.folderName || '未选择' }}</span>
+            </div>
+
+            <div class="fold__acts">
+              <button
+                class="fold__btn"
+                type="button"
+                :disabled="scanBusy"
+                @click="runScan(false)"
+              >
+                {{ scanBusy ? '扫描中…' : settings.folderName ? '重新扫描' : '选择文件夹' }}
+              </button>
+              <button
+                v-if="settings.folderName"
+                class="fold__btn fold__btn--ghost"
+                type="button"
+                :disabled="scanBusy"
+                @click="runScan(true)"
+              >
+                换文件夹
+              </button>
+            </div>
+
+            <p class="hint hint--tight">
+              第一次会调起系统目录选择器，之后记住授权。只认 EPUB，递归最多 6 层、800 本。
+              导进来的书按「引用原文件」登记，文件本体留在手机里，不占第二份空间。
+            </p>
+            <p v-if="settings.folderScanAt" class="hint hint--tight">
+              上次扫描：{{ fmtTime(settings.folderScanAt) }}
+            </p>
+            <p v-if="scanMsg" class="hint hint--tight">{{ scanMsg }}</p>
+            <!-- 导入结果放在列表块外面：导完列表会清空，放里面提示会跟着消失 -->
+            <p v-if="importMsg" class="hint hint--tight">{{ importMsg }}</p>
+
+            <template v-if="scanFresh.length">
+              <p class="sub">
+                扫描到 {{ scanAll }} 本，其中 {{ scanFresh.length }} 本还没导入
+              </p>
+              <div class="fold__list">
+                <label v-for="f in scanFresh" :key="f.uri" class="fold__item">
+                  <input v-model="picked" type="checkbox" :value="f.uri" />
+                  <span class="fold__name">{{ f.name }}</span>
+                  <span class="fold__meta">
+                    {{ f.dir ? `${f.dir} · ` : '' }}{{ formatBytes(f.size) }}
+                  </span>
+                </label>
+              </div>
+              <div class="fold__acts">
+                <button
+                  class="fold__btn fold__btn--primary"
+                  type="button"
+                  :disabled="scanBusy || !picked.length"
+                  @click="importPicked"
+                >
+                  {{ scanBusy ? '处理中…' : `导入所选（${picked.length}）` }}
+                </button>
+                <button
+                  class="fold__btn fold__btn--ghost"
+                  type="button"
+                  :disabled="scanBusy"
+                  @click="picked = scanFresh.map((f) => f.uri)"
+                >
+                  全选
+                </button>
+              </div>
+            </template>
+
+            <label class="row row--switch">
+              <span>文件夹有新书时自动导入</span>
+              <input v-model="settings.folderAutoImport" class="toggle" type="checkbox" />
+            </label>
+            <p class="hint hint--tight">
+              安卓没有后台文件监听，实际是「下次打开 App 或切回前台时补进来」，单次最多 10 本；
+              多出来的留在上面列表里手动勾。
+            </p>
+            <p v-if="settings.folderLastAutoText" class="hint hint--tight">
+              上次自动导入：{{ settings.folderLastAutoText }}（{{ fmtTime(settings.folderLastAutoAt) }}）
+            </p>
+          </template>
+
+          <p v-else class="hint hint--tight">
+            扫描文件夹只在安卓 App 里可用——浏览器拿不到目录长期授权。网页端请用右下角加号选文件，
+            或从桌面把书拖进来。
+          </p>
+        </section>
       </template>
 
       <!-- 03 同步 -->
@@ -471,6 +636,7 @@ onMounted(syncApplied)
       </template>
       </div>
     </Transition>
+    </div>
 
     <input ref="imageInput" class="hidden" type="file" accept="image/*" @change="onImage" />
   </div>
@@ -490,9 +656,17 @@ onMounted(syncApplied)
   border-bottom-color: var(--line);
 }
 
-.settings__scroll {
+/* 两级页面的叠放舞台：两个滚动层同时存在时互相覆盖，避免布局跳动 */
+.settings__stage {
+  position: relative;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+}
+
+.settings__scroll {
+  position: absolute;
+  inset: 0;
   padding: 10px 16px calc(40px + var(--safe-bottom));
 }
 
@@ -696,7 +870,7 @@ onMounted(syncApplied)
 /* ---- UI 风格三选一 ---- */
 .styles {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
   margin-top: 14px;
 }
@@ -1057,6 +1231,125 @@ onMounted(syncApplied)
   margin: 18px 2px 0;
   font-size: 11.5px;
   line-height: 1.7;
+  color: var(--text-3);
+}
+/* ============ 极简（厚墨/轻墨风）：设置页去卡片 ============
+   厚墨的设置页没有卡片块，靠分节标题 + 一条细线分区。只改形态，
+   行高、点击区、分组顺序全部不动。 */
+[data-style='classic'] .card {
+  margin-bottom: 0;
+  padding: 16px 2px 14px;
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+}
+
+[data-style='classic'] .card:last-of-type {
+  border-bottom: 0;
+}
+
+/* 分类列表自己带行间线，卡片不再留内边距，行贴同一条左边线 */
+[data-style='classic'] .cats.card {
+  padding: 0;
+}
+
+[data-style='classic'] .cat {
+  padding-left: 2px;
+  padding-right: 2px;
+}
+
+[data-style='classic'] .card__title,
+[data-style='classic'] .cat__name {
+  font-family: var(--font-ui);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+/* ============ 扫描文件夹 ============ */
+/* 路径可能很长，挤在右列里要截断，别把行撑破 */
+.fold__path {
+  max-width: 58%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fold__acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 6px;
+}
+
+.fold__btn {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.fold__btn--ghost {
+  color: var(--text-2);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.fold__btn--primary {
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.fold__btn:disabled {
+  opacity: 0.5;
+}
+
+/* 极简：按钮跟分段控件一样收成小方角（厚墨那边没有胶囊） */
+[data-style='classic'] .fold__btn {
+  border-radius: 8px;
+}
+
+.fold__list {
+  margin: 8px 0 2px;
+  border-top: 1px solid var(--line);
+}
+
+.fold__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.fold__item input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.fold__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  color: var(--text);
+}
+
+.fold__meta {
+  flex: none;
+  max-width: 44%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
   color: var(--text-3);
 }
 </style>

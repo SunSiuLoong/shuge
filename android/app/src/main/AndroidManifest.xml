@@ -24,6 +24,14 @@
 
         </activity>
 
+        <!-- App 内置浏览器：整屏 WebView + 自绘工具栏，不对外导出 -->
+        <activity
+            android:name=".InAppWebActivity"
+            android:exported="false"
+            android:theme="@style/AppTheme.NoActionBar"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

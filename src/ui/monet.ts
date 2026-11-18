@@ -225,6 +225,23 @@ export interface Md3Roles {
   onPrimaryContainer: string
   secondaryContainer: string
   onSecondaryContainer: string
+  /* [m3e] M3 Expressive 追加的角色：容层级（tonal elevation）、描边、
+     三级色、错误色、反色面。Expressive 的层次全靠这几个容器色拉出来，
+     不再用阴影——这也是为什么下面 CSS 里阴影基本被清空。 */
+  surfaceContainerLowest: string
+  surfaceContainerLow: string
+  surfaceContainer: string
+  surfaceContainerHigh: string
+  surfaceContainerHighest: string
+  outline: string
+  outlineVariant: string
+  tertiaryContainer: string
+  onTertiaryContainer: string
+  error: string
+  errorContainer: string
+  onErrorContainer: string
+  inverseSurface: string
+  inverseOnSurface: string
 }
 
 /**
@@ -236,13 +253,16 @@ export interface Md3Roles {
 export const md3Roles = (src: MonetColor, dark: boolean): Md3Roles => {
   const key = keySat(src)
   const primary = usable(key, dark)
+  /* 三级色：M3 把 tertiary 当作「和主色撞色但不相近」的第二个强调，
+     用来做 Expressive 的彩色容器（chip 选中、进度条、图表） */
+  const third = { h: (src.h + 58) % 360, s: src.s, l: src.l }
   if (!dark) {
     return {
       bg: hslCss(tone(src, 98)),
       bgAlt: hslCss(tone(src, 95)),
-      surface: hslCss(tone(src, 94)),
-      surface2: hslCss(tone(src, 91)),
-      text: hslCss(tone(src, 14, 2)),
+      surface: hslCss(tone(src, 98)),
+      surface2: hslCss(tone(src, 94)),
+      text: hslCss(tone(src, 12, 2)),
       text2: hslCss(tone(src, 34, 3)),
       text3: hslCss(tone(src, 46, 3)),
       line: hslCss(tone(src, 30, 2), 0.13),
@@ -250,25 +270,53 @@ export const md3Roles = (src: MonetColor, dark: boolean): Md3Roles => {
       onPrimary: '#ffffff',
       primaryContainer: hslCss(tone(key, 88, 3.2)),
       onPrimaryContainer: hslCss(tone(src, 12, 4)),
-      secondaryContainer: hslCss(tone(key, 89, 1.8)),
-      onSecondaryContainer: hslCss(tone(src, 16, 3)),
+      secondaryContainer: hslCss(tone(key, 90, 1.8)),
+      onSecondaryContainer: hslCss(tone(src, 14, 3)),
+      surfaceContainerLowest: hslCss(tone(src, 100)),
+      surfaceContainerLow: hslCss(tone(src, 96)),
+      surfaceContainer: hslCss(tone(src, 94)),
+      surfaceContainerHigh: hslCss(tone(src, 92)),
+      surfaceContainerHighest: hslCss(tone(src, 90)),
+      outline: hslCss(tone(src, 50, 2.4)),
+      outlineVariant: hslCss(tone(src, 80, 2)),
+      tertiaryContainer: hslCss(tone(third, 88, 3)),
+      onTertiaryContainer: hslCss(tone(third, 16, 3.4)),
+      error: '#b3261e',
+      errorContainer: '#f9dedc',
+      onErrorContainer: '#410e0b',
+      inverseSurface: hslCss(tone(src, 20, 2)),
+      inverseOnSurface: hslCss(tone(src, 95)),
     }
   }
   return {
     bg: hslCss(tone(src, 6)),
     bgAlt: hslCss(tone(src, 9)),
-    surface: hslCss(tone(src, 12)),
-    surface2: hslCss(tone(src, 16)),
+    surface: hslCss(tone(src, 6)),
+    surface2: hslCss(tone(src, 12)),
     text: hslCss(tone(src, 90, 1.4)),
-    text2: hslCss(tone(src, 72, 1.8)),
-    text3: hslCss(tone(src, 64, 1.8)),
+    text2: hslCss(tone(src, 78, 1.8)),
+    text3: hslCss(tone(src, 68, 1.8)),
     line: hslCss(tone(src, 80, 1.2), 0.13),
     primary: hslCss(primary),
     onPrimary: hslCss(tone(src, 12, 1.6)),
-    primaryContainer: hslCss(tone(key, 30, 1.4)),
+    primaryContainer: hslCss(tone(key, 32, 1.4)),
     onPrimaryContainer: hslCss(tone(key, 90, 1.6)),
-    secondaryContainer: hslCss(tone(key, 27, 1.1)),
-    onSecondaryContainer: hslCss(tone(key, 88, 1.3)),
+    secondaryContainer: hslCss(tone(key, 30, 1.1)),
+    onSecondaryContainer: hslCss(tone(key, 90, 1.3)),
+    surfaceContainerLowest: hslCss(tone(src, 4)),
+    surfaceContainerLow: hslCss(tone(src, 10)),
+    surfaceContainer: hslCss(tone(src, 12)),
+    surfaceContainerHigh: hslCss(tone(src, 17)),
+    surfaceContainerHighest: hslCss(tone(src, 22)),
+    outline: hslCss(tone(src, 60, 1.6)),
+    outlineVariant: hslCss(tone(src, 30, 1.6)),
+    tertiaryContainer: hslCss(tone(third, 30, 1.4)),
+    onTertiaryContainer: hslCss(tone(third, 90, 1.6)),
+    error: '#f2b8b5',
+    errorContainer: '#8c1d18',
+    onErrorContainer: '#f9dedc',
+    inverseSurface: hslCss(tone(src, 90)),
+    inverseOnSurface: hslCss(tone(src, 20, 2)),
   }
 }
 
@@ -289,6 +337,21 @@ const applyRoles = (roles: Md3Roles): void => {
   set('--md-on-primary-container', roles.onPrimaryContainer)
   set('--md-secondary-container', roles.secondaryContainer)
   set('--md-on-secondary-container', roles.onSecondaryContainer)
+  /* [m3e] 层级容器与描边：CSS 里的彩色层次全靠这几个值 */
+  set('--md-surface-container-lowest', roles.surfaceContainerLowest)
+  set('--md-surface-container-low', roles.surfaceContainerLow)
+  set('--md-surface-container', roles.surfaceContainer)
+  set('--md-surface-container-high', roles.surfaceContainerHigh)
+  set('--md-surface-container-highest', roles.surfaceContainerHighest)
+  set('--md-outline', roles.outline)
+  set('--md-outline-variant', roles.outlineVariant)
+  set('--md-tertiary-container', roles.tertiaryContainer)
+  set('--md-on-tertiary-container', roles.onTertiaryContainer)
+  set('--md-error', roles.error)
+  set('--md-error-container', roles.errorContainer)
+  set('--md-on-error-container', roles.onErrorContainer)
+  set('--md-inverse-surface', roles.inverseSurface)
+  set('--md-inverse-on-surface', roles.inverseOnSurface)
 }
 
 /** clearMonet 时要一并撤掉的 MD3 令牌 */
@@ -306,6 +369,20 @@ const ROLE_KEYS = [
   '--md-on-primary-container',
   '--md-secondary-container',
   '--md-on-secondary-container',
+  '--md-surface-container-lowest',
+  '--md-surface-container-low',
+  '--md-surface-container',
+  '--md-surface-container-high',
+  '--md-surface-container-highest',
+  '--md-outline',
+  '--md-outline-variant',
+  '--md-tertiary-container',
+  '--md-on-tertiary-container',
+  '--md-error',
+  '--md-error-container',
+  '--md-on-error-container',
+  '--md-inverse-surface',
+  '--md-inverse-on-surface',
 ]
 
 /** 把取色结果写到根节点；无封面时用默认色，保证风格不发灰 */

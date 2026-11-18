@@ -104,141 +104,86 @@ html:not([data-scheme]) {
   --glass-shadow: 0 12px 40px -16px rgba(40, 32, 24, 0.32);
 }
 
-/* ============ UI 风格 1：原生（MD3 / Material You） ============
-   [shuge] 按 MD3 baseline 规范重做：颜色角色由 monet.ts 的 md3Roles 从取色源
-   生成并映射到 App 令牌（--bg/--surface/--text/--accent…），这里只负责
-   「元素怎么用角色」——表面容器、圆角形状、控件状态层。
-   参考 Material 3 / M3 Expressive：大圆角 16-28、胶囊控件、tonal surface、
-   选中态用 secondary-container 而非 primary 实色。 */
+/* ============ UI 风格 1：原生（M3 Expressive） ============
+   [m3e] 原生外观的规则已整体搬到 styles/m3e.css（清单更长，单独一个文件好维护）。
+   这里保留一条最小约束：圆角档位，供未单独声明的元素兜底。 */
 [data-style='monet'] {
-  --radius: 10px;
-  --radius-lg: 20px;
+  --radius: 12px;
+  --radius-lg: 28px;
 }
 
-[data-style='monet'] body {
-  background-image: var(--monet-wash, none);
-  background-attachment: fixed;
-  background-size: cover;
-}
+/* ============ UI 风格 1：极简（厚墨 / 轻墨风） ============
+   [houmo] 按轻墨开源仓库（wizos/lightink，GPL-3.0，厚墨 v1.3 复刻）的
+   res/values/colors.xml 与布局重做「极简」外观：纯白纸面、1px 细线分层、
+   零卡片零阴影、蓝色点睛、无衬线大标题。只换「面」，布局/功能/控件位置不变。
 
-/* 深色下 accent 更亮，accent 底上的字换深字 */
-[data-style='monet'][data-scheme='dark'] {
-  --on-accent: #10130e;
-}
-
-/* 顶栏：surface 容器半透明 + 轻模糊，滚动后加描边（M3 top app bar） */
-[data-style='monet'] .topbar {
-  background: color-mix(in srgb, var(--surface) 72%, transparent);
-  backdrop-filter: blur(16px) saturate(140%);
-}
-
-[data-style='monet'] .topbar__title {
-  font-weight: 500;
-  letter-spacing: 0.01em;
-}
-
-/* 卡片封面阴影染一点主色 */
-[data-style='monet'] .card__cover {
-  box-shadow: 0 12px 30px -16px var(--accent);
-}
-
-/* 选中态统一走 secondary-container（M3 filter chip / nav 的选中面） */
-[data-style='monet'] .chip.is-active,
-[data-style='monet'] .seg.seg .seg__item.is-active,
-[data-style='monet'] .seg__item.is-active {
-  background: var(--md-secondary-container, var(--accent-soft));
-  color: var(--md-on-secondary-container, var(--text));
-  border-color: transparent;
-  font-weight: 600;
-}
-
-/* 标签页选中：secondary-container 胶囊 */
-[data-style='monet'] .tab {
-  border-color: var(--line);
-}
-
-[data-style='monet'] .tab.is-active {
-  background: var(--md-secondary-container, var(--accent));
-  color: var(--md-on-secondary-container, var(--on-accent));
-  border-color: transparent;
-}
-
-/* FAB 用 primary-container + on-primary-container（M3 FAB baseline） */
-[data-style='monet'] .fab,
-[data-style='monet'] .empty__btn {
-  --fab-bg: var(--md-primary-container, var(--accent));
-  --fab-fg: var(--md-on-primary-container, var(--on-accent));
-  --fab-line: transparent;
-  --fab-shadow: 0 10px 26px -12px color-mix(in srgb, var(--accent) 55%, transparent);
-}
-
-/* 顶栏工具浮块：primary 8% 淡染 */
-[data-style='monet'] .topbar__tools {
-  --tools-bg: color-mix(in srgb, var(--accent) 10%, transparent);
-  --tools-line: transparent;
-  --tools-shadow: 0 6px 18px -12px color-mix(in srgb, var(--accent) 70%, transparent);
-}
-
-/* ============ UI 风格 2：经典（轻小说文库式纸面） ============
-   [shuge] 参考「轻小说文库」的版面气质：淡紫纸底 + 细格纹、衬线题字、
-   白卡片细描边、小节眉标带长线。只换「面」，布局与控件位置三套 UI 一致。
-   accent #6f6090 是 #887AA5 压暗一档的结果：原色当文字压淡紫底只有 3.6:1，
-   压暗后浅底 4.96:1、白字 5.58:1，全部过 4.5 基线。 */
+   配色映射（厚墨原值 → 这里的取值与理由）：
+   - 底 #FFFFFF、次层 #F6F6F6、描边 #ECECEC、标题 #222A2C：原值直接沿用。
+   - 强调 #1980FF（厚墨蓝）：压在白色上只有 3.77:1，做文字不够 4.5，
+     所以压暗一档到 #0E6FD8（白底 4.94:1、白字压上去 4.94:1），色相不变。
+   - 次要文字 #888A8C（原值 3.4:1，12px 说明文字看不清）→ #5F6468。
+   - 三级文字 #AFAFAF（原值 2.2:1）→ #6F7376（4.82:1）。
+   - 深色版是自己的推导（厚墨没有暗色）：近黑底 #0F1113 + 亮蓝 #4C9EFF，
+     亮蓝压深底时白字只有 3:1，故 --on-accent 换深字。 */
 [data-style='classic'] {
-  --radius: 8px;
-  --radius-lg: 18px;
-  --grid-line: rgba(111, 96, 144, 0.05);
+  --radius: 6px;
+  --radius-lg: 10px;
 }
 
 [data-style='classic'][data-scheme='light'] {
-  --bg: #f4f0f7;
-  --bg-alt: #ece7f2;
+  --bg: #ffffff;
+  --bg-alt: #f6f6f6;
   --surface: #ffffff;
-  --surface-2: #f3eff7;
-  --accent: #6f6090;
-  --accent-soft: rgba(111, 96, 144, 0.12);
-  --line: rgba(60, 48, 90, 0.1);
+  --surface-2: #f6f6f6;
+  --text: #222a2c;
+  --text-2: #5f6468;
+  --text-3: #6f7376;
+  --accent: #0e6fd8;
+  --accent-soft: rgba(14, 111, 216, 0.1);
+  --on-accent: #ffffff;
+  --line: #ececec;
 }
 
 [data-style='classic'][data-scheme='dark'] {
-  --bg: #161620;
-  --bg-alt: #1b1c26;
-  --surface: #1f202b;
-  --surface-2: #262836;
-  --accent: #a394c5;
-  --accent-soft: rgba(163, 148, 197, 0.16);
-  /* 深色下 accent 变亮（#a394c5 压 surface-2(#262836) 5.3:1），accent 底上的字换深字 */
-  --on-accent: #171526;
-  --line: rgba(255, 255, 255, 0.08);
-  --grid-line: rgba(163, 148, 197, 0.055);
+  --bg: #0f1113;
+  --bg-alt: #15181a;
+  --surface: #16191c;
+  --surface-2: #1d2125;
+  --text: #e6e6e6;
+  --text-2: #a0a5a9;
+  --text-3: #8e9397;
+  --accent: #4c9eff;
+  --accent-soft: rgba(76, 158, 255, 0.14);
+  --on-accent: #0b1016;
+  --line: rgba(255, 255, 255, 0.09);
 }
 
-/* 细格纹纸面：两条 1px 渐变线叠成方格，fixed 不跟滚动抖 */
+/* 纯白纸面：不加任何纹理/渐变（上一版是淡紫格纹） */
 [data-style='classic'] body {
-  background-image:
-    linear-gradient(var(--grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-  background-size: 26px 26px;
-  background-attachment: fixed;
+  background-image: none;
 }
 
+/* 顶栏：纯白无描边，滚起来才出现一条 1px 线（厚墨顶栏就是这样） */
 [data-style='classic'] .topbar {
-  background: transparent;
+  background: var(--bg);
 }
 
 [data-style='classic'] .topbar.scrolled {
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: blur(10px);
+  background: var(--bg);
+  backdrop-filter: none;
+  box-shadow: none;
+  border-bottom-color: var(--line);
 }
 
-/* 顶栏标题统一衬线 + 字距（文库题字气质） */
+/* 顶栏大标题：18px 无衬线加粗（厚墨 BoldTextView 18sp） */
 [data-style='classic'] .topbar__title {
-  font-family: var(--font-serif);
-  letter-spacing: 0.06em;
-  font-weight: 600;
+  font-family: var(--font-ui);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
-/* —— 品牌题字（书架顶栏专用）：默认藏，classic 露出 —— */
+/* —— 品牌题字：厚墨顶栏只有一行大字，不带方形印戳和英文小字 —— */
 .brand__mark,
 .brand__cap {
   display: none;
@@ -249,77 +194,44 @@ html:not([data-scheme]) {
   align-items: center;
 }
 
-[data-style='classic'] .brand__mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 30px;
-  height: 30px;
-  margin-right: 10px;
-  border-radius: 8px;
-  background: var(--text);
-  color: var(--bg);
-  font-family: var(--font-serif);
-  font-size: 16px;
-  font-weight: 700;
-}
-
-/* 标题与英文小字上下两行：text node + span 在列向 flex 里各占一行 */
-[data-style='classic'] .brand__text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
+[data-style='classic'] .brand__mark,
 [data-style='classic'] .brand__cap {
+  display: none;
+}
+
+/* —— 小节眉标：一行灰色小字，去掉长线和圆点（厚墨的分节没有装饰） —— */
+[data-style='classic'] .eyebrow.eyebrow {
   display: block;
-  font-family: var(--font-ui);
-  font-size: 8.5px;
-  font-weight: 500;
-  letter-spacing: 0.22em;
-  line-height: 1;
-  margin-top: 3px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
   color: var(--text-3);
 }
 
-/* —— 小节眉标：文字后接一条长线，线尾一颗紫点（文库分节样式）。
-   .eyebrow.eyebrow 双写类压过 SettingsView 的 scoped 定义 —— */
-[data-style='classic'] .eyebrow.eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 9.5px;
-  letter-spacing: 0.2em;
-  color: var(--text-2);
-}
-
 [data-style='classic'] .eyebrow.eyebrow::after {
-  content: '';
-  flex: 1;
-  height: 8px;
-  background:
-    linear-gradient(var(--line), var(--line)) no-repeat center / 100% 1px,
-    radial-gradient(circle, var(--accent) 1.6px, transparent 1.8px) no-repeat right center / 6px 6px;
+  content: none;
 }
 
-/* —— 分段控件：joined 底改散排胶囊，选中外圈 + 淡紫底 —— */
+/* —— 分段控件：灰底槽 + 白色药丸（轻墨阅读设置面板的做法） —— */
 [data-style='classic'] .seg.seg {
-  background: transparent;
-  padding: 0;
-  gap: 8px;
+  background: var(--surface-2);
+  padding: 2px;
+  gap: 2px;
+  border-radius: 8px;
 }
 
 [data-style='classic'] .seg.seg .seg__item {
-  background: var(--surface-2);
+  background: transparent;
   border: 1px solid transparent;
+  border-radius: 6px;
   color: var(--text-2);
 }
 
 [data-style='classic'] .seg.seg .seg__item.is-active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--surface);
+  border-color: transparent;
+  color: var(--text);
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
 /* ============ UI 风格 2：液态玻璃（全局） ============
@@ -365,11 +277,11 @@ html:not([data-scheme]) {
   letter-spacing: 0.08em;
 }
 
-/* 标签页随外观：极简用衬线小签（文库分卷气质） */
+/* 标签页随外观：极简用无衬线小签，选中态靠字重 + 蓝色下划线（不加底色块） */
 [data-style='classic'] .tab .tab__label {
-  font-family: var(--font-serif);
-  font-size: 13.5px;
-  letter-spacing: 0.02em;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  letter-spacing: 0.01em;
 }
 
 /* ============ 混合方案：玻璃外观书架容器化 ============
@@ -415,6 +327,21 @@ html:not([data-scheme]) {
 
 /* 莫奈书卡保持与经典一致的白卡（用户选择：莫奈不动书卡，只保留选中标签实心） */
 
+/* 极简的标签页：去掉胶囊描边，只用蓝色文字标出当前页（厚墨没有胶囊控件）。
+   .tab.tab 双写类压过 ShelfView scoped 的 .tab.is-active[data-v]（同优先级后者赢） */
+[data-style='classic'] .tab.tab {
+  border-color: transparent;
+  border-radius: 8px;
+  color: var(--text-2);
+}
+
+[data-style='classic'] .tab.tab.is-active {
+  background: transparent;
+  border-color: transparent;
+  color: var(--accent);
+  font-weight: 700;
+}
+
 /* ============ 主操作按钮（书架 FAB / 空态导入）============
    面随外观走，ShelfView 的 scoped 样式只管布局，颜色阴影全走这里的令牌：
    经典=文库纸面圆钮（白面 + 强调色图标 + 细描边），莫奈=实心主色，
@@ -428,12 +355,13 @@ html:not([data-scheme]) {
   --fab-blur: none;
 }
 
+/* 极简：白面 + 1px 灰线 + 蓝图标，投影压到几乎看不见（厚墨没有浮起的块） */
 [data-style='classic'] .fab,
 [data-style='classic'] .empty__btn {
   --fab-bg: var(--surface);
   --fab-fg: var(--accent);
-  --fab-line: color-mix(in srgb, var(--accent) 42%, transparent);
-  --fab-shadow: 0 6px 18px -10px color-mix(in srgb, var(--accent) 50%, transparent);
+  --fab-line: #e3e3e3;
+  --fab-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 [data-style='glass'] .fab,
@@ -452,6 +380,148 @@ html:not([data-scheme]) {
     --fab-bg: var(--accent);
     --fab-blur: none;
   }
+}
+
+/* ============ 极简（厚墨/轻墨风）：阅读页与所有浮层 ============
+   配色变量由 reader/theme.ts 的 classic 分支喂给阅读页根节点（否则会被阅读主题
+   的砖红强调色盖住），这里只管形态：去圆角、去投影、1px 细线分层。
+   正文排版不在此列——正文配色仍由阅读主题决定。 */
+
+/* 顶栏：只有底部一条细线，没有浮起的投影 */
+[data-style='classic'] .rbar--top {
+  box-shadow: none;
+}
+
+/* 底栏：厚墨的工具栏是直角、贴底，不画圆角也不投影 */
+[data-style='classic'] .rbar--bottom {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+[data-style='classic'] .rbar__title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text);
+}
+
+[data-style='classic'] .rbtn,
+[data-style='classic'] .rnav {
+  border-radius: 8px;
+}
+
+/* 进度拇指：一个小蓝点，不要投影 */
+[data-style='classic'] .slider::-webkit-slider-thumb {
+  box-shadow: none;
+}
+
+/* 目录抽屉：白面直角，靠左侧一条细线与正文分开 */
+[data-style='classic'] .drawer {
+  box-shadow: none;
+}
+
+[data-style='classic'] .toc.toc {
+  border-radius: 0;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+}
+
+[data-style='classic'] .toc__title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* 排版 / 搜索 / 书评面板：一张白纸片，直角、顶部一条线 */
+[data-style='classic'] .sheet.sheet {
+  border-radius: 0;
+  box-shadow: none;
+  border-top: 1px solid var(--line);
+}
+
+[data-style='classic'] .sheet__head {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+/* 行与行之间切 1px 细线（厚墨的列表就是这么分的）：每行（除首行）一条顶线，
+   不依赖相邻兄弟——行间夹提示文字时线不能断 */
+[data-style='classic'] .row:not(:first-child) {
+  border-top: 1px solid var(--line);
+}
+
+/* 面板里的分隔线元素与行线重复，极简下收掉（只影响阅读排版面板，设置页/社区不动） */
+[data-style='classic'] .sheet .divider {
+  display: none;
+}
+
+/* 选项片：小方角、灰底；选中换成浅蓝底 + 蓝字加粗，不铺实心色块 */
+[data-style='classic'] .chip.chip {
+  border-radius: 8px;
+  color: var(--text-2);
+}
+
+[data-style='classic'] .chip.chip.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+[data-style='classic'] .chip.chip--ghost {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line);
+  outline: none;
+}
+
+[data-style='classic'] .stepper.stepper {
+  border-radius: 8px;
+}
+
+[data-style='classic'] .fontchip.fontchip {
+  border-radius: 8px;
+}
+
+[data-style='classic'] .fontchip.fontchip.is-active {
+  background: var(--accent-soft);
+  outline-color: transparent;
+}
+
+[data-style='classic'] .fontchip.is-active .fontchip__pick,
+[data-style='classic'] .fontchip.is-active .fontchip__del {
+  color: var(--accent);
+}
+
+/* 主题色块：方一点，选中只描一圈蓝线，不要双环 */
+[data-style='classic'] .swatch__chip {
+  border-radius: 6px;
+}
+
+[data-style='classic'] .swatch.swatch.is-active .swatch__chip {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+/* 开关：闭合时灰描边，开启时蓝底（颜色变量已跟着外观走） */
+[data-style='classic'] .switch.switch {
+  outline-color: #dde1e5;
+}
+
+[data-style='classic'] .switch.switch.is-on {
+  outline-color: transparent;
+}
+
+[data-style='classic'][data-scheme='dark'] .switch.switch {
+  outline-color: rgba(255, 255, 255, 0.14);
+}
+
+[data-style='classic'][data-scheme='dark'] .switch.switch.is-on {
+  outline-color: transparent;
+}
+
+/* 深色下原本为暖纸配色写的兜底灰（#9d998f）换成冷灰，跟极简的中性色一致 */
+[data-style='classic'][data-scheme='dark'] .tab__count,
+[data-style='classic'][data-scheme='dark'] .seg__item:not(.is-active) {
+  color: #a9aeb3;
 }
 
 /* —— 面板/浮层组 —— */
@@ -811,9 +881,23 @@ a {
   transition: opacity 190ms var(--ease), transform 190ms var(--ease);
 }
 
+/* 两层叠在同一舞台里交叉淡入：进来的压在出去的上面，出去的退得快一些。
+   进来的那层**不从 0 开始淡**——从 0 开始的两层都半透明，中间会透出底色，
+   整块区域看着就是「闪一下」；起点 0.92 只是压一点点，感观上是滑动为主 */
+.setfwd-enter-active,
+.setback-enter-active {
+  z-index: 2;
+}
+
+.setfwd-leave-active,
+.setback-leave-active {
+  z-index: 1;
+  transition-duration: 130ms;
+}
+
 /* 前进：新页从右侧滑入，旧页向左让位 */
 .setfwd-enter-from {
-  opacity: 0;
+  opacity: 0.92;
   transform: translateX(28px);
 }
 
@@ -824,7 +908,7 @@ a {
 
 /* 后退：镜像 */
 .setback-enter-from {
-  opacity: 0;
+  opacity: 0.92;
   transform: translateX(-28px);
 }
 

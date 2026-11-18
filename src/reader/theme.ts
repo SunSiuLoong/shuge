@@ -89,6 +89,24 @@ export const readerVars = (p: ReaderPalette): Record<string, string> => {
     '--line': p.line,
     '--scrim': p.scrim,
   }
+  /* [houmo] 极简（厚墨/轻墨风）下，阅读页的「外壳」也跟外观走：
+     顶栏、底栏、目录抽屉、排版/搜索面板统一成纯白面 + 1px 细线 + 厚墨蓝，
+     不再沿用阅读主题的砖红强调色。--bg 刻意不动——它同时是顶底栏底色和
+     滚动模式的渐变色，改成纯白会让正文纸色边上露出一条白带。
+     夜读主题走深色一档：近黑 #0F1113 + 亮蓝 #4C9EFF，accent 上换深字。 */
+  if (settings.uiStyle === 'classic') {
+    const night = p.bg === '#16181a'
+    vars['--surface'] = night ? '#15171A' : '#ffffff'
+    vars['--surface-2'] = night ? '#1E2125' : '#F3F5F7'
+    vars['--text'] = night ? '#E8E9EA' : '#222A2C'
+    vars['--text-2'] = night ? '#A9AEB3' : '#5F6468'
+    vars['--text-3'] = night ? '#8C9196' : '#6F7376'
+    vars['--accent'] = night ? '#4C9EFF' : '#0E6FD8'
+    vars['--accent-soft'] = night ? 'rgba(76, 158, 255, 0.16)' : 'rgba(14, 111, 216, 0.10)'
+    vars['--on-accent'] = night ? '#0B0D0F' : '#ffffff'
+    vars['--line'] = night ? 'rgba(255, 255, 255, 0.10)' : '#ECECEC'
+    vars['--scrim'] = night ? 'rgba(0, 0, 0, 0.62)' : 'rgba(20, 22, 24, 0.32)'
+  }
   /* [shuge] 液态玻璃外观下，阅读页的 --glass-* 必须跟着阅读配色走：
      底色取 p.bg（同顶栏/正文同源，避免白玻璃压暖纸显成白带）；
      alpha 参考 Lumi_Books 的对比遮罩（neutral veil 0.60）——透一点点，

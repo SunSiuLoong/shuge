@@ -44,6 +44,9 @@ interface ShugeLocalFilePlugin {
     base64: string
     eof: boolean
   }>
+  scan(): Promise<{ folder?: string; files: ScannedFile[]; cancelled?: boolean }>
+  forgetFolder(): Promise<void>
+  hasFolder(): Promise<{ has: boolean }>
 }
 
 export interface LocalRefFile {
@@ -51,6 +54,12 @@ export interface LocalRefFile {
   uri: string
   name: string
   size: number
+}
+
+/** 手机文件夹扫描出来的一个文件：uri 可直接交给 readRefFileNative 读成 File */
+export interface ScannedFile extends LocalRefFile {
+  /** 相对所选文件夹的上级目录，空串表示就在根下 */
+  dir: string
 }
 
 const plugin = isNative
@@ -88,8 +97,53 @@ export const pickRefFilesNative = async (): Promise<LocalRefFile[]> => {
   return files ?? []
 }
 
-/** 安卓：按块读 content:// 到内存并拼成 File（不落盘） */
-export const readRefFileNative = async (uri: string, name: string): Promise<File> => {
+/**
+ * 安卓：扫描用户授权过的手机文件夹，列出里面的电子书。
+ * 第一次调用会拉起系统目录选择器；之后记住授权，直接重扫。
+ *
+ * 45 秒超时是必要的兜底：部分国产 ROM 的文件选择器会把 Activity 顶到后台，
+ * 回来后 Capacitor 的 Bridge 可能已经重建，挂起的 PluginCall 找不回来——
+ * 那样 Promise 永远不 settle，界面会一直停在「扫描中…」。
+ */
+const SCAN_TIMEOUT = 45_000
+
+export const scanNativeFolder = async (): Promise<{ folder: string; files: ScannedFile[] }> => {
+  if (!plugin) throw new Error('手机存储搜索只在 App 里可用')
+  let timer = 0
+  try {
+    const r = await Promise.race([
+      plugin.scan(),
+      new Promise<never>((_, reject) => {
+        timer = window.setTimeout(
+          () => reject(new Error('选完文件夹没收到结果，再点一次「选择文件夹」')),
+          SCAN_TIMEOUT,
+        )
+      }),
+    ])
+    return { folder: r.folder ?? '', files: r.files ?? [] }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** 忘掉当前授权的文件夹，下次扫描重新选（书架搜索里的「换文件夹」） */
+export const forgetNativeFolder = async (): Promise<void> => {
+  if (!plugin) return
+  await plugin.forgetFolder()
+}
+
+/**
+ * 原生侧是否还留着文件夹授权。
+ * 自动导入前必须先问这一句：scan() 在没授权时会拉起目录选择器，
+ * 光看 settings 里记的文件夹名（App 重装后仍在）会导致一开 App 就弹窗。
+ */
+export const hasNativeFolder = async (): Promise<boolean> => {
+  if (!plugin) return false
+  const r = await plugin.hasFolder()
+  return !!r?.has
+}
+
+/** 安卓：按块读 content:// 到内存并拼成 File（不落盘） */export const readRefFileNative = async (uri: string, name: string): Promise<File> => {
   if (!plugin) throw new Error('原生插件不可用')
   const CHUNK = 2 * 1024 * 1024 // 2MB / 次，避开 bridge 单次传大字符串
   const parts: Uint8Array[] = []

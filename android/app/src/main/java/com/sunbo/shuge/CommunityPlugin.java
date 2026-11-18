@@ -94,6 +94,8 @@ public class CommunityPlugin extends Plugin {
                 ret.put("status", status);
                 ret.put("url", finalUrl);
                 ret.put("body", new String(buf.toByteArray(), StandardCharsets.UTF_8));
+                // 临时诊断：CookieManager 有没有读到这个域的 Cookie
+                ret.put("hasCookie", cookie != null && !cookie.isEmpty());
                 call.resolve(ret);
             } catch (Exception e) {
                 call.reject("request failed: " + e.getMessage());

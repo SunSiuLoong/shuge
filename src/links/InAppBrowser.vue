@@ -5,7 +5,7 @@ import { closeInAppBrowser, inAppBrowser } from '../links/inapp'
 
 /**
  * 网页端的内置浏览器：整屏 iframe + 一条工具栏。
- * 安卓 App 不用它——那边走 Custom Tabs（见 links/inapp.ts）。
+ * 安卓 App 用原生那套（InAppWebActivity，整屏 WebView），不走这里。
  */
 const loading = ref(true)
 const frameKey = ref(0)

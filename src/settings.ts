@@ -61,6 +61,15 @@ export interface ReaderSettings {
   glassOpacity: number
   /** 导入时引用原文件（不复制到书库）。不支持的浏览器自动回退复制 */
   importByRef: boolean
+  /** 已授权扫描的文件夹显示名（空 = 还没选过） */
+  folderName: string
+  /** 上次扫描时间戳（0 = 没扫过） */
+  folderScanAt: number
+  /** 文件夹里出现新书时自动导入（安卓 App 内，启动/回前台时补） */
+  folderAutoImport: boolean
+  /** 上次自动导入时间与结果文案，给设置页回显 */
+  folderLastAutoAt: number
+  folderLastAutoText: string
 }
 
 const KEY = 'shuge.settings.v1'
@@ -89,6 +98,11 @@ const DEFAULTS: ReaderSettings = {
   showReview: true,
   glassOpacity: 40,
   importByRef: true,
+  folderName: '',
+  folderScanAt: 0,
+  folderAutoImport: false,
+  folderLastAutoAt: 0,
+  folderLastAutoText: '',
 }
 
 const THEMES: ThemeKey[] = ['follow', 'paper', 'rice', 'green', 'night']
@@ -128,6 +142,14 @@ const migrate = (raw: Record<string, unknown>): Partial<ReaderSettings> => {
   out.monetSource = pick(MONET_SOURCES, out.monetSource, 'system')
   if (typeof out.showReview !== 'boolean') out.showReview = true
   if (typeof out.importByRef !== 'boolean') out.importByRef = true
+  /* [shuge] 文件夹扫描：老存档没有这几项；类型写坏时退回默认，别让设置页崩 */
+  if (typeof out.folderName !== 'string') out.folderName = ''
+  if (typeof out.folderScanAt !== 'number' || !Number.isFinite(out.folderScanAt)) out.folderScanAt = 0
+  if (typeof out.folderAutoImport !== 'boolean') out.folderAutoImport = false
+  if (typeof out.folderLastAutoAt !== 'number' || !Number.isFinite(out.folderLastAutoAt)) {
+    out.folderLastAutoAt = 0
+  }
+  if (typeof out.folderLastAutoText !== 'string') out.folderLastAutoText = ''
   out.glassOpacity = Math.min(90, Math.max(10,
     typeof out.glassOpacity === 'number' && Number.isFinite(out.glassOpacity)
       ? Math.round(out.glassOpacity)
@@ -274,7 +296,7 @@ export const UI_STYLE_LABELS: Record<UiStyleKey, string> = {
 }
 
 export const UI_STYLE_NOTES: Record<UiStyleKey, string> = {
-  classic: '纸面简洁：素底、细线、不打扰',
+  classic: '纯白纸面、细线分层，只有一处蓝色点睛',
   monet: 'MD3 动态取色，跟系统壁纸走（谷歌 Material You 那套）',
   glass: '半透明磨砂，浮层像一片玻璃',
 }

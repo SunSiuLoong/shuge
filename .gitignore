@@ -45,3 +45,9 @@ docs/screenshots/*-raw.png
 # 项目记忆与本地工作区数据，不进仓库
 Agent.md
 .workbuddy/
+
+# 备份目录（另一会话留下的产物备份，不入库）
+assets_bak_*/
+assets_old_*/
+dist-m3e/
+dist_bak_*/

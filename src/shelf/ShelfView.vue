@@ -7,6 +7,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Settings2,
   Tag,
   Tags,
   Trash2,
@@ -19,11 +20,14 @@ import type { ImportItem } from '../importer/importer'
 import { formatBytes } from '../storage/opfs'
 import { isNative as isNativeApp } from '../native'
 import {
+  forgetNativeFolder,
   pickRefFilesDesktop,
   pickRefFilesNative,
   readRefFileNative,
+  scanNativeFolder,
   supportsRefImport,
 } from '../storage/refs'
+import type { ScannedFile } from '../storage/refs'
 import {
   books,
   loading,
@@ -397,17 +401,82 @@ let communitySeq = 0
 
 const kw = computed(() => query.value.trim().toLowerCase())
 
-/** 书架/本地范围：按书名、作者、标签过滤 */
+/**
+ * 书架范围：按书名、作者、标签过滤当前标签页。
+ * 「本地」不再查已入库的书——那是书架自己的事；本地=手机存储文件夹，
+ * 结果来自原生扫描（见下面的 localFiles）。
+ */
 const searchHits = computed(() => {
-  if (!kw.value || searchScope.value === 'community') return []
-  const base = searchScope.value === 'shelf' ? tabBooks.value : books.value
-  return base.filter(
+  if (!kw.value || searchScope.value !== 'shelf') return []
+  return tabBooks.value.filter(
     (b) =>
       b.title.toLowerCase().includes(kw.value) ||
       (b.author ?? '').toLowerCase().includes(kw.value) ||
       (b.tags ?? []).some((t) => t.toLowerCase().includes(kw.value)),
   )
 })
+
+/* ---- 本地（手机存储）：SAF 目录授权 + 递归扫描 ---- */
+const localFiles = ref<ScannedFile[]>([])
+const localFolder = ref('')
+const localBusy = ref(false)
+const localMsg = ref('')
+const importingUri = ref('')
+
+/** 手机存储搜索只在 App 里成立；浏览器里这一档直接不出现 */
+const scopes = computed<SearchScope[]>(() =>
+  isNativeApp ? ['shelf', 'local', 'community'] : ['shelf', 'community'],
+)
+
+const scopeName = (s: SearchScope): string =>
+  s === 'shelf' ? '书架' : s === 'local' ? '本地' : '社区'
+
+const localHits = computed(() =>
+  localFiles.value.filter((f) => !kw.value || f.name.toLowerCase().includes(kw.value)),
+)
+
+const scanFolder = async (): Promise<void> => {
+  if (!isNativeApp) return
+  localBusy.value = true
+  localMsg.value = ''
+  try {
+    const r = await scanNativeFolder()
+    localFolder.value = r.folder
+    localFiles.value = r.files
+    if (!r.files.length) localMsg.value = '这个文件夹里没找到电子书'
+  } catch (e) {
+    localFiles.value = []
+    localMsg.value = e instanceof Error ? e.message : '扫描失败'
+  } finally {
+    localBusy.value = false
+  }
+}
+
+/** 换文件夹：清掉授权记录再扫一次，系统会重新弹目录选择器 */
+const changeLocalFolder = async (): Promise<void> => {
+  await forgetNativeFolder().catch(() => undefined)
+  localFiles.value = []
+  await scanFolder()
+}
+
+/** 点扫描结果：按引用模式导入（原文件留在手机里，不复制） */
+const importScanned = async (f: ScannedFile): Promise<void> => {
+  if (importingUri.value) return
+  // 扫描会带出 pdf / mobi / txt，导入链路只吃 EPUB；提前拦下，别让它走到「失败」再报
+  if (!/\.epub$/i.test(f.name)) {
+    toast('目前只能导入 EPUB，这个文件导不了', 6000)
+    return
+  }
+  importingUri.value = f.uri
+  try {
+    const file = await readRefFileNative(f.uri, f.name)
+    await finishImport([{ file, ref: { refUri: f.uri } }])
+  } catch (e) {
+    toast(e instanceof Error ? e.message : '导入失败', 9000)
+  } finally {
+    importingUri.value = ''
+  }
+}
 
 const searchingCommunity = computed(
   () => searchScope.value === 'community' && communitySearching.value,
@@ -433,6 +502,10 @@ const runCommunitySearch = async (): Promise<void> => {
     if (seq === communitySeq) communitySearching.value = false
   }
 }
+
+watch(searchScope, (s) => {
+  if (s === 'local' && !localFiles.value.length && !localBusy.value) void scanFolder()
+})
 
 watch([query, searchScope], () => {
   if (searchScope.value !== 'community') {
@@ -473,9 +546,7 @@ const openCommunitySearchPage = (): void => {
   )
 }
 
-const scopeLabel = computed(() =>
-  searchScope.value === 'shelf' ? '书架' : searchScope.value === 'local' ? '本地' : '社区',
-)
+const scopeLabel = computed(() => scopeName(searchScope.value))
 
 const hasTabs = computed(() => settings.shelfTabs && shelfTabs.value.length > 1)/** 标签条横向滚动容器：切页后把当前标签滚到中间，标签多的时候不至于看不见 */
 const tabsEl = ref<HTMLElement | null>(null)
@@ -598,20 +669,17 @@ onMounted(() => {
 
       <template v-else>
         <!-- [shuge] 文库式品牌题字：书徽 + 标题 + 英文小字。装饰元素，
-             只有极简风格在 CSS 里露出；整块标题就是设置入口 -->
-        <button
-          class="topbar__title title--brand brand-btn"
-          type="button"
-          aria-label="打开设置"
-          @click="navigate('/settings')"
-        >
+             只有极简风格在 CSS 里露出。
+             注意：这块**不能**做成按钮——顶栏任意空白处双击才是「回到书架顶部」，
+             设置入口改放右侧齿轮，否则单击标题会抢掉双击手势 -->
+        <h1 class="topbar__title title--brand">
           <span class="brand__mark" aria-hidden="true">书</span>
           <span class="brand__text">
             书阁
             <span class="brand__cap">SHUGE / READING ARCHIVE</span>
           </span>
-        </button>
-        <!-- 搜索按钮：设置已集成到「书阁」标题，排序在设置的书架分组里 -->
+        </h1>
+        <!-- 工具区：搜索 + 设置（排序在设置的书架分组里） -->
         <div class="topbar__tools">
           <button
             class="icon-btn"
@@ -622,6 +690,14 @@ onMounted(() => {
           >
             <Search v-if="!showSearch" :size="19" :stroke-width="1.6" />
             <X v-else :size="19" :stroke-width="1.6" />
+          </button>
+          <button
+            class="icon-btn"
+            type="button"
+            aria-label="设置"
+            @click="navigate('/settings')"
+          >
+            <Settings2 :size="19" :stroke-width="1.6" />
           </button>
         </div>
       </template>
@@ -634,7 +710,13 @@ onMounted(() => {
         v-model="query"
         class="searchbar__input"
         type="search"
-        :placeholder="searchScope === 'community' ? '在阡陌居搜索帖子' : '搜书名、作者、标签'"
+        :placeholder="
+          searchScope === 'community'
+            ? '在阡陌居搜索帖子'
+            : searchScope === 'local'
+              ? '搜手机里的电子书'
+              : '搜书名、作者、标签'
+        "
         enterkeyhint="search"
       />
       <button
@@ -648,14 +730,14 @@ onMounted(() => {
       </button>
       <div class="searchbar__scopes">
         <button
-          v-for="s in (['shelf', 'local', 'community'] as const)"
+          v-for="s in scopes"
           :key="s"
           type="button"
           class="searchbar__scope"
           :class="{ 'is-active': searchScope === s }"
           @click="searchScope = s"
         >
-          {{ s === 'shelf' ? '书架' : s === 'local' ? '本地' : '社区' }}
+          {{ scopeName(s) }}
         </button>
       </div>
     </div>
@@ -696,8 +778,8 @@ onMounted(() => {
       @pointerup="onUp"
       @pointercancel="onCancel"
     >
-      <!-- 搜索态：书架/本地出书卡，社区出帖子列表 -->
-      <template v-if="showSearch && query.trim()">
+      <!-- 搜索态：书架出书卡、本地出手机文件夹扫描结果、社区出帖子列表 -->
+      <template v-if="showSearch && (query.trim() || searchScope === 'local')">
         <template v-if="searchScope === 'community'">
           <p v-if="searchingCommunity" class="tabempty">正在搜索社区…</p>
           <p v-else-if="communityMsg || !communityItems.length" class="tabempty">
@@ -716,6 +798,42 @@ onMounted(() => {
             </button>
             <button class="thread thread--more" type="button" @click="openCommunitySearchPage">
               在内置浏览器里看完整结果
+            </button>
+          </div>
+        </template>
+        <template v-else-if="searchScope === 'local'">
+          <!-- 手机存储：选文件夹授权后列出里面的电子书，点一条按引用模式导入 -->
+          <div class="localfold">
+            <span class="localfold__path">{{ localFolder || '手机存储' }}</span>
+            <span class="localfold__count">{{ localFiles.length }} 本</span>
+            <button
+              class="localfold__btn"
+              type="button"
+              :disabled="localBusy"
+              @click="changeLocalFolder"
+            >
+              换文件夹
+            </button>
+          </div>
+          <p v-if="localBusy" class="tabempty">正在扫描文件夹…</p>
+          <p v-else-if="localMsg" class="tabempty">{{ localMsg }}</p>
+          <p v-else-if="!localHits.length" class="tabempty">
+            没有名字含「{{ query.trim() }}」的文件
+          </p>
+          <div v-else class="localfiles">
+            <button
+              v-for="f in localHits"
+              :key="f.uri"
+              class="localrow"
+              type="button"
+              :disabled="importingUri === f.uri"
+              @click="importScanned(f)"
+            >
+              <span class="localrow__name">{{ f.name }}</span>
+              <span class="localrow__meta">
+                {{ f.dir ? `${f.dir} · ` : '' }}{{ formatBytes(f.size) }}
+              </span>
+              <span class="localrow__act">{{ importingUri === f.uri ? '导入中…' : '导入' }}</span>
             </button>
           </div>
         </template>
@@ -755,6 +873,7 @@ onMounted(() => {
 
       <template v-else>
         <div
+          :key="shelfTab"
           class="grid"
           :class="{ 'is-list': settings.shelfLayout === 'list' }"
           :style="{ '--cols': settings.shelfColumns }"
@@ -992,6 +1111,26 @@ onMounted(() => {
   grid-template-columns: repeat(var(--cols, 2), 1fr);
   gap: 18px clamp(8px, 2vw, 16px);
   padding: 14px 18px 0;
+  /* 切标签页时整片轻轻淡入上浮一下（:key 换 tab 会重建这块，动画随之重放） */
+  animation: grid-swap 220ms var(--ease) both;
+}
+
+@keyframes grid-swap {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 系统开了「减少动态效果」就不动 */
+@media (prefers-reduced-motion: reduce) {
+  .grid {
+    animation: none;
+  }
 }
 
 /* 列表模式：一行一本，不再吃网格 */
@@ -1067,15 +1206,7 @@ onMounted(() => {
   backdrop-filter: var(--tools-blur, none);
 }
 
-/* 设置入口 = 书架左上角的「书阁」题字（整块可点） */
-.brand-btn {
-  text-align: left;
-  color: inherit;
-}
-
-.brand-btn:active {
-  opacity: 0.7;
-}
+/* 设置入口已移到顶栏右侧齿轮；标题只做展示，双击顶栏仍是「回到顶部」 */
 
 /* ---- 搜索条（M3 search bar：胶囊 + 高面） ---- */
 .searchbar {
@@ -1157,6 +1288,92 @@ onMounted(() => {
   margin: 10px 20px 0;
   font-size: 12px;
   color: var(--text-2);
+}
+
+/* ---- 本地（手机存储）结果 ---- */
+.localfold {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 20px 6px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.localfold__path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.localfold__count {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.localfold__btn {
+  flex: none;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.localfold__btn:disabled {
+  opacity: 0.5;
+}
+
+.localfiles {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 4px 18px 0;
+}
+
+.localrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 4px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+
+.localrow:disabled {
+  opacity: 0.6;
+}
+
+.localrow__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.localrow__meta {
+  flex: none;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.localrow__act {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
 }
 
 .threads {

@@ -14,6 +14,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(LocalFilePlugin.class);
         // 社区（阡陌居）HTTP 桥 + 附件下载
         registerPlugin(CommunityPlugin.class);
+        // App 内置浏览器（整屏 WebView，Cookie 与社区 HTTP 桥共用）
+        registerPlugin(InAppWebPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }
