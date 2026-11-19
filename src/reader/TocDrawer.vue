@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { ChevronRight } from 'lucide-vue-next'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { ChevronRight, LocateFixed } from 'lucide-vue-next'
 import type { TocItem } from '../types'
 
 const props = defineProps<{
@@ -90,6 +90,39 @@ const toggle = (key: string): void => {
   expanded.value = next
 }
 
+/** 打开/点定位后滚到当前章：祖先链已展开，等 DOM 渲染完再滚 */
+const bodyEl = ref<HTMLElement | null>(null)
+const flashing = ref(false)
+let flashTimer: ReturnType<typeof setTimeout> | undefined
+
+const scrollToCurrent = (behavior: ScrollBehavior): void => {
+  const body = bodyEl.value
+  const el = body?.querySelector<HTMLElement>('[data-current]')
+  if (!body || !el) return
+  // 用 rect 差值算偏移，不受 offsetParent 影响也不滚动外层容器
+  const rect = el.getBoundingClientRect()
+  const bodyRect = body.getBoundingClientRect()
+  const delta = rect.top + rect.height / 2 - (bodyRect.top + bodyRect.height / 2)
+  body.scrollBy({ top: delta, behavior })
+}
+
+const locate = (): void => {
+  if (!currentPath.value.length) return
+  expandAncestors(currentPath.value)
+  flashing.value = false
+  window.clearTimeout(flashTimer)
+  void nextTick(() => {
+    scrollToCurrent('smooth')
+    flashing.value = true
+    flashTimer = setTimeout(() => (flashing.value = false), 1200)
+  })
+}
+
+// 目录每次打开都是新挂载：直接定位到当前章（瞬时，不播动画）
+onMounted(() => {
+  void nextTick(() => scrollToCurrent('auto'))
+})
+
 const onRow = (row: Row): void => {
   if (row.hasChildren) {
     toggle(row.key)
@@ -115,7 +148,7 @@ const hasTree = computed(() => props.toc.some((t) => t.children?.length))
       </button>
       <button class="toc__close" type="button" @click="emit('close')">关闭</button>
     </header>
-    <div class="toc__body scroll-y">
+    <div ref="bodyEl" class="toc__body scroll-y">
       <p v-if="!props.toc.length" class="toc__empty">这本书没有可用的目录</p>
       <button
         v-for="row in rows"
@@ -123,10 +156,12 @@ const hasTree = computed(() => props.toc.some((t) => t.children?.length))
         class="toc__row"
         :class="{
           'is-current': props.currentHref && row.item.href === props.currentHref,
+          'is-flash': flashing && props.currentHref && row.item.href === props.currentHref,
           'is-branch': row.hasChildren,
           'is-open': expanded.has(row.key),
           'is-inpath': row.inPath && !(props.currentHref && row.item.href === props.currentHref),
         }"
+        :data-current="props.currentHref && row.item.href === props.currentHref ? '' : undefined"
         :style="{ paddingLeft: `${12 + row.depth * 14}px` }"
         type="button"
         @click="onRow(row)"
@@ -142,11 +177,22 @@ const hasTree = computed(() => props.toc.some((t) => t.children?.length))
         <span v-if="row.hasChildren" class="toc__count">{{ row.item.children?.length }}</span>
       </button>
     </div>
+    <!-- 定位浮块：翻远了随时点一下滚回当前章 -->
+    <button
+      v-if="currentPath.length"
+      class="toc__locate fab"
+      type="button"
+      aria-label="定位到当前章节"
+      @click="locate"
+    >
+      <LocateFixed :size="20" :stroke-width="1.7" />
+    </button>
   </div>
 </template>
 
 <style scoped>
 .toc {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -225,6 +271,40 @@ const hasTree = computed(() => props.toc.some((t) => t.children?.length))
 .toc__row.is-current {
   color: var(--accent);
   font-weight: 700;
+}
+
+/* 定位后的闪一下：短促高亮提示当前章在哪 */
+.toc__row.is-flash {
+  animation: toc-flash 1.2s var(--ease);
+}
+
+@keyframes toc-flash {
+  0%,
+  100% {
+    background: transparent;
+  }
+
+  30% {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+}
+
+/* 定位浮块：配色走全局 .fab 令牌（三套外观各有一套），这里只管布局 */
+.toc__locate {
+  position: absolute;
+  right: 16px;
+  bottom: calc(20px + var(--safe-bottom));
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--fab-line, transparent);
+  background: var(--fab-bg, var(--accent));
+  color: var(--fab-fg, var(--on-accent));
+  box-shadow: var(--fab-shadow, none);
+  backdrop-filter: var(--fab-blur, none);
 }
 
 .toc__chev {

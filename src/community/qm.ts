@@ -196,49 +196,147 @@ export interface TaskClaimResult {
 }
 
 /**
- * 领取威望：手机版任务每天自动完成，只差「领取」这一步——
- * 这里替用户把任务页里所有「领取奖励」链接点一遍。
- * 领完再抓一次任务页兜底（有任务领取后立刻又出现下一个可领项）。
+ * 阡陌居的规则（用户确认）：每日威望红包是「申请即完成」——
+ * 新任务列表里点「立即申请」（home.php?mod=task&do=apply&id=N，纯 GET），
+ * 奖励直接到账，不需要再点领取奖励。
+ *
+ * 流程（对照 Discuz touch 模板 space_task_list.htm 与 lang_message 文案）：
+ *  1. 新任务 tab：把所有「立即申请」点一遍；
+ *     「任务申请成功」= 申请到账；「您已申请过此任务/本期您已申请过」= 今天已领过；
+ *  2. 进行中 tab：个别任务要手动领奖（do=draw），顺手领一遍；
+ *  3. 一无所获时查「已完成的任务」tab——有红包/威望任务说明今天已领过，
+ *     区别于「站点今天真没有任务」。
+ *
+ * 拉成纯函数是为了能在 Node 里用假页面单测（qmGet 只在原生环境可用）。
  */
-export const claimPrestigeTasks = async (): Promise<TaskClaimResult> => {
-  const first = await qmGet('/home.php?mod=task')
-  if (!loggedInOf(first.body)) {
-    return { ok: false, applied: 0, drawn: 0, message: '还没登录，先在社区里登录一次' }
-  }
-  let drawn = 0
+export interface TaskFlowResult {
+  applied: number
+  already: number
+  drawn: number
+  /** 任务今天已存在于已完成列表（兜底判定「已领过」） */
+  doneToday: boolean
+  /** 申请没成功时截一句站点原话，方便定位 */
+  fails: string[]
+}
 
-  const drawRound = async (html: string): Promise<number> => {
-    const ids = new Set<string>()
-    const reDraw = /home\.php\?mod=task&do=draw&id=(\d+)/g
-    let m: RegExpExecArray | null
-    let n = 0
-    while ((m = reDraw.exec(html))) ids.add(m[1])
-    for (const id of ids) {
+type Fetcher = (path: string) => Promise<{ body: string }>
+
+/**
+ * 任务链接正则坑：页面里 href 的 & 是转义成 &amp; 的（搜索接口的正则
+ * 也是按 &amp; 写的），字面 & 永远匹配不到——所以先把实体归一成 & 再找。
+ */
+const normalizeAmp = (html: string): string => html.replace(/&amp;/g, '&')
+
+const taskIdsOf = (html: string, kind: 'apply' | 'draw'): string[] => {
+  const ids = new Set<string>()
+  const re = new RegExp(`home\\.php\\?mod=task&do=${kind}&id=(\\d+)`, 'g')
+  let m: RegExpExecArray | null
+  while ((m = re.exec(normalizeAmp(html)))) ids.add(m[1])
+  return [...ids]
+}
+
+const FAIL_HINTS: Array<[RegExp, string]> = [
+  [/您已申请过此任务|本期您已申请过/, '已申请过'],
+  [/需要先完成另一个任务/, '有前置任务未完成'],
+  [/用户组不允许申请/, '用户组不允许'],
+  [/申请人数已满|先到先得/, '名额已满'],
+]
+
+export const runTaskClaim = async (fetch: Fetcher): Promise<TaskFlowResult> => {
+  const applied: string[] = []
+  const already: string[] = []
+  const drawn: string[] = []
+  const fails: string[] = []
+
+  // 1) 新任务：立即申请（每日威望红包在这里，申请即到账）
+  const newHtml = (await fetch('/home.php?mod=task&item=new')).body
+  if (loggedInOf(newHtml)) {
+    for (const id of taskIdsOf(newHtml, 'apply')) {
       try {
-        const res = await qmGet(`/home.php?mod=task&do=draw&id=${id}`)
-        if (/成功|奖励|获得|威望|红包|恭喜/.test(res.body)) n++
+        const res = await fetch(`/home.php?mod=task&do=apply&id=${id}`)
+        if (/任务申请成功/.test(res.body)) {
+          applied.push(id)
+        } else if (/您已申请过此任务|本期您已申请过/.test(res.body)) {
+          already.push(id)
+        } else {
+          fails.push(stripTags(res.body).replace(/\s+/g, ' ').slice(0, 80))
+        }
       } catch {
         /* 单个任务失败不影响其它 */
       }
     }
-    return n
-  }
 
-  drawn += await drawRound(first.body)
-  const again = await qmGet('/home.php?mod=task')
-  if (loggedInOf(again.body)) {
-    drawn += await drawRound(again.body)
-  }
-
-  if (!drawn) {
-    return {
-      ok: false,
-      applied: 0,
-      drawn,
-      message: '没有可领取的任务：可能今天已领过，或任务还没自动完成',
+    // 2) 进行中：个别任务要手动「领取奖励」，顺手点一遍
+    const doingHtml = (await fetch('/home.php?mod=task&item=doing')).body
+    if (loggedInOf(doingHtml)) {
+      for (const id of taskIdsOf(doingHtml, 'draw')) {
+        try {
+          const res = await fetch(`/home.php?mod=task&do=draw&id=${id}`)
+          if (/任务已成功完成|恭喜您/.test(res.body)) drawn.push(id)
+        } catch {
+          /* 同上 */
+        }
+      }
     }
   }
-  return { ok: true, applied: 0, drawn, message: `领取了 ${drawn} 项任务奖励` }
+
+  // 3) 兜底：啥都没捞到时，看「已完成的任务」里有没有「红包 + 今天的日期」——
+  //    已完成列表是历史累积的，昨天的红包条目也会躺在里面，只看名字会误判
+  let doneToday = false
+  if (!applied.length && !already.length && !drawn.length) {
+    try {
+      const doneHtml = normalizeAmp((await fetch('/home.php?mod=task&item=done')).body)
+      if (loggedInOf(doneHtml)) {
+        const d = new Date()
+        const pad = (n: number): string => String(n).padStart(2, '0')
+        const todayStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+        // 按条目切块，红包条目里还得有今天的日期才算今天领过
+        const blocks = doneHtml.split(/<li[\s>]/i).filter((b) => /红包/.test(b))
+        doneToday = blocks.some((b) => b.includes(todayStr))
+      }
+    } catch {
+      /* 查不了就不猜 */
+    }
+  }
+
+  return {
+    applied: applied.length,
+    already: already.length,
+    drawn: drawn.length,
+    doneToday,
+    fails,
+  }
+}
+
+export const claimPrestigeTasks = async (): Promise<TaskClaimResult> => {
+  // 先探登录态——没登录别把页面当「无任务」误报
+  const probe = await qmGet('/home.php?mod=task')
+  if (!loggedInOf(probe.body)) {
+    return { ok: false, applied: 0, drawn: 0, message: '还没登录，先在社区里登录一次' }
+  }
+
+  const r = await runTaskClaim(async (path) => qmGet(path))
+
+  if (r.applied || r.already || r.drawn) {
+    const parts: string[] = []
+    if (r.applied) parts.push(`申请了 ${r.applied} 项任务，威望红包已到账`)
+    if (r.already && !r.applied) parts.push('今天已经领过了')
+    if (r.drawn) parts.push(`领取了 ${r.drawn} 项奖励`)
+    return { ok: true, applied: r.applied, drawn: r.drawn, message: parts.join('；') }
+  }
+  if (r.doneToday) {
+    return { ok: true, applied: 0, drawn: 0, message: '今天已经领过了（已完成列表里有红包任务）' }
+  }
+  return {
+    ok: false,
+    applied: 0,
+    drawn: 0,
+    message: r.fails.length
+      ? `任务没申请成：${
+          FAIL_HINTS.find(([re]) => re.test(r.fails[0]))?.[1] ?? r.fails[0]
+        }`
+      : '任务页今天没有可申请的项目',
+  }
 }
 
 /* ---------------- 社区搜索 ---------------- */
