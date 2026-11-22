@@ -8,8 +8,127 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>书阁</title>
+    <script>
+      /* 首帧前先把明暗定下来：否则深色用户会先看到一屏米白再跳黑 */
+      ;(function () {
+        try {
+          var raw = localStorage.getItem('shuge.settings.v1')
+          var s = raw ? JSON.parse(raw) : {}
+          var dark =
+            s.scheme === 'dark' ||
+            (s.scheme !== 'light' &&
+              window.matchMedia &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches)
+          var root = document.documentElement
+          root.dataset.scheme = dark ? 'dark' : 'light'
+          var meta = document.querySelector('meta[name="theme-color"]')
+          if (meta) meta.setAttribute('content', dark ? '#16181A' : '#FBF9F4')
+        } catch (e) {
+          /* 存储不可用就用默认浅色 */
+        }
+      })()
+    </script>
+    <style>
+      /* 启动画面：静态一层，App 首屏可交互后由 ui/boot.ts 淡出移除 */
+      #boot {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: #fbf9f4;
+        color: #23211e;
+        transition: opacity 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      [data-scheme='dark'] #boot {
+        background: #16181a;
+        color: #d9d5cc;
+      }
+
+      #boot.is-gone {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #boot .boot__mark {
+        display: flex;
+        align-items: flex-end;
+        gap: 5px;
+        height: 34px;
+        opacity: 0.85;
+        animation: boot-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+      }
+
+      #boot .boot__mark span {
+        width: 7px;
+        border-radius: 1px;
+        background: currentColor;
+        opacity: 0.42;
+      }
+
+      #boot .boot__mark span:nth-child(1) {
+        height: 24px;
+        animation: boot-bar 1.4s ease-in-out infinite;
+      }
+
+      #boot .boot__mark span:nth-child(2) {
+        height: 34px;
+        opacity: 0.72;
+        animation: boot-bar 1.4s ease-in-out 120ms infinite;
+      }
+
+      #boot .boot__mark span:nth-child(3) {
+        height: 19px;
+        animation: boot-bar 1.4s ease-in-out 240ms infinite;
+      }
+
+      #boot .boot__name {
+        font-family: 'Songti SC', 'Source Han Serif SC', 'Noto Serif CJK SC', 'Noto Serif SC',
+          serif;
+        font-size: 15px;
+        letter-spacing: 0.28em;
+        text-indent: 0.28em;
+        opacity: 0.7;
+        animation: boot-in 500ms cubic-bezier(0.2, 0.8, 0.2, 1) 80ms both;
+      }
+
+      @keyframes boot-in {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+      }
+
+      @keyframes boot-bar {
+        0%,
+        100% {
+          transform: scaleY(1);
+        }
+        50% {
+          transform: scaleY(0.72);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #boot .boot__mark,
+        #boot .boot__mark span,
+        #boot .boot__name {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="boot" aria-hidden="true">
+      <div class="boot__mark"><span></span><span></span><span></span></div>
+      <div class="boot__name">书阁</div>
+    </div>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

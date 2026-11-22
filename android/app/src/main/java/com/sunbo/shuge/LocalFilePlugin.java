@@ -156,9 +156,25 @@ public class LocalFilePlugin extends Plugin {
     }
 
     /**
-     * 分块读：offset 用 ParcelFileDescriptor.seek，大文件 skip 也不拖慢。
+     * 分块读：offset 用 lseek 精确定位（FileInputStream.skip 是往前读，大 offset 慢）。
+     * pfd 按 uri 缓存——SAF openFileDescriptor 是 binder IPC，读一本大书分十几块
+     * 每块都重开一次太亏；dup 出独立句柄读，关闭不影响缓存。
      * base64 走标准 java.util.Base64（API 26+）。
      */
+    private String cachedUri = null;
+    private ParcelFileDescriptor cachedPfd = null;
+
+    private synchronized ParcelFileDescriptor acquirePfd(String uriStr, Uri uri) throws Exception {
+        if (cachedPfd != null && uriStr.equals(cachedUri)) return cachedPfd;
+        if (cachedPfd != null) {
+            try { cachedPfd.close(); } catch (Exception ignored) { }
+            cachedPfd = null;
+        }
+        cachedPfd = bridge.getContext().getContentResolver().openFileDescriptor(uri, "r");
+        cachedUri = uriStr;
+        return cachedPfd;
+    }
+
     @PluginMethod
     public void readChunk(PluginCall call) {
         String uriStr = call.getString("uri");
@@ -171,37 +187,54 @@ public class LocalFilePlugin extends Plugin {
         }
         try {
             Uri uri = Uri.parse(uriStr);
-            ParcelFileDescriptor pfd = bridge.getContext().getContentResolver()
-                .openFileDescriptor(uri, "r");
-            if (pfd == null) {
-                call.reject("cannot open");
-                return;
-            }
-            try (ParcelFileDescriptor p = pfd;
-                 FileInputStream in = new FileInputStream(p.getFileDescriptor())) {
-                long skipped = in.skip(offset);
-                // InputStream.skip 不保证一次读完，兜底循环
-                while (skipped < offset) {
-                    long s = in.skip(offset - skipped);
-                    if (s <= 0) break;
-                    skipped += s;
+            ParcelFileDescriptor pfd = acquirePfd(uriStr, uri);
+            // dup 出独立句柄读；dup 共享文件偏移，所以 lseek+read 全程加锁，
+            // 避免并发读互相挪位（JS 侧实际是串行调用，这里兜底）
+            byte[] buf;
+            int n;
+            synchronized (this) {
+                try (ParcelFileDescriptor dup = pfd.dup();
+                     FileInputStream in = new FileInputStream(dup.getFileDescriptor())) {
+                    android.system.Os.lseek(in.getFD(), offset, android.system.OsConstants.SEEK_SET);
+                    buf = new byte[length];
+                    n = 0;
+                    int r;
+                    while (n < length && (r = in.read(buf, n, length - n)) != -1) n += r;
                 }
-                byte[] buf = new byte[length];
-                int n = 0, r;
-                while (n < length && (r = in.read(buf, n, length - n)) != -1) n += r;
-                JSObject ret = new JSObject();
-                ret.put("base64", n > 0
-                    ? Base64.getEncoder().encodeToString(
-                        n == buf.length ? buf : java.util.Arrays.copyOf(buf, n))
-                    : "");
-                ret.put("eof", n < length);
-                call.resolve(ret);
             }
+            JSObject ret = new JSObject();
+            ret.put("base64", n > 0
+                ? Base64.getEncoder().encodeToString(
+                    n == buf.length ? buf : java.util.Arrays.copyOf(buf, n))
+                : "");
+            ret.put("eof", n < length);
+            call.resolve(ret);
         } catch (SecurityException e) {
             call.reject("没有原文件的读取权限，请重新导入", e);
         } catch (Exception e) {
+            // SAF 提供方偶发把 fd 收走（文档刷新/进程回收）：清缓存让下次重开
+            synchronized (this) {
+                if (cachedPfd != null) {
+                    try { cachedPfd.close(); } catch (Exception ignored) { }
+                    cachedPfd = null;
+                    cachedUri = null;
+                }
+            }
             call.reject("读取失败：" + e.getMessage(), e);
         }
+    }
+
+    /** 文件大小（zip 中央目录随机访问要用），读不到给 0 */
+    @PluginMethod
+    public void stat(PluginCall call) {
+        String uriStr = call.getString("uri");
+        if (uriStr == null) {
+            call.reject("uri missing");
+            return;
+        }
+        JSObject ret = new JSObject();
+        ret.put("size", sizeOf(Uri.parse(uriStr)));
+        call.resolve(ret);
     }
 
     /* ============ 手机存储文件夹扫描 ============

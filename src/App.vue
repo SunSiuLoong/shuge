@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, watch } from 'vue'
 import { route } from './router'
 import ShelfView from './shelf/ShelfView.vue'
 import ReaderView from './reader/ReaderView.vue'
@@ -12,9 +12,20 @@ import { initUiStyle } from './ui/style'
 import InAppBrowser from './links/InAppBrowser.vue'
 import { autoImportFromFolder } from './storage/folderWatch'
 import { noticeText, notify } from './ui/notice'
+import { loading } from './shelf/store'
+import { dismissBoot } from './ui/boot'
 
 // UI 风格（莫奈取色 / 液态玻璃）的副作用挂在这里，只在 App 挂载一次
 initUiStyle()
+
+/*
+ * 启动画面收尾：书架数据一到就撤掉 #boot（见 index.html）。
+ * 直接深链进阅读页时书架不会加载，兜底 2.5 秒后强制撤掉，不能把用户关在外面。
+ */
+watch(loading, (v) => {
+  if (!v) dismissBoot()
+}, { immediate: true })
+window.setTimeout(dismissBoot, 2500)
 
 /** 启动对账：删掉没有记录指向的孤儿文件，标记文件丢失的书 */
 const reconcile = async (): Promise<void> => {

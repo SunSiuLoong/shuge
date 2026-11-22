@@ -13,6 +13,7 @@ import {
 import { APP_VERSION } from '../version'
 import {
   AFDIAN_URL,
+  CONTACT_EMAIL,
   DONATE_IMAGE,
   ISSUES_URL,
   LICENSE_NAME,
@@ -29,6 +30,7 @@ import {
   type StorageInfo,
 } from '../storage/opfs'
 import { isNative } from '../native'
+import { Mail } from 'lucide-vue-next'
 import ConfirmDialog from '../ui/ConfirmDialog.vue'
 
 /**
@@ -36,6 +38,11 @@ import ConfirmDialog from '../ui/ConfirmDialog.vue'
  * 设置页第 5 组和 /about 页共用这一份，避免两处各写一遍文案。
  */
 type State = 'idle' | 'checking' | 'latest' | 'update' | 'error'
+
+/** mailto 交给系统处理（安卓会弹邮件应用），不能走 window.open 的 _blank */
+const contactDeveloper = (): void => {
+  location.href = `mailto:${CONTACT_EMAIL}`
+}
 
 const state = ref<State>('idle')
 const latest = ref<ReleaseInfo | null>(null)
@@ -244,6 +251,17 @@ onMounted(() => {
       用 MIT 协议开源，渲染引擎是 foliate-js（同为 {{ LICENSE_NAME }}）。遇到打不开的书，把书名和来源发到 issues 里，比截图有用。
     </p>
 
+    <!-- 免责声明与开发者联系方式 -->
+    <button class="line line--btn" type="button" @click="contactDeveloper">
+      <span class="line__with-icon">
+        <Mail :size="16" :stroke-width="1.8" />
+        联系开发者
+      </span>
+      <span class="line__value line__value--mono">{{ CONTACT_EMAIL }}</span>
+    </button>
+
+    <p class="disclaimer">本项目仅供学习交流使用，请勿用于任何商业用途；如有侵权，请联系开发者删除。</p>
+
     <Transition name="fade">
       <ConfirmDialog
         v-if="askClear"
@@ -396,6 +414,14 @@ onMounted(() => {
   font-size: 11.5px;
   line-height: 1.8;
   color: var(--text-3);
+}
+
+.disclaimer {
+  margin: 12px 0 4px;
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--text-3);
+  text-align: center;
 }
 
 .donate {

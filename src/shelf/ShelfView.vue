@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   CheckCheck,
   ExternalLink,
@@ -8,6 +8,7 @@ import {
   Plus,
   Search,
   Settings2,
+  SlidersHorizontal,
   Tag,
   Tags,
   Trash2,
@@ -49,6 +50,7 @@ import BookMetaSheet from './BookMetaSheet.vue'
 import BookEditSheet from './BookEditSheet.vue'
 import CoverSheet from './CoverSheet.vue'
 import BatchTagSheet from './BatchTagSheet.vue'
+import TagManagerSheet from './TagManagerSheet.vue'
 import LinkSheet from '../links/LinkSheet.vue'
 import ConfirmDialog from '../ui/ConfirmDialog.vue'
 import InfoDialog from '../ui/InfoDialog.vue'
@@ -99,8 +101,107 @@ const allSelected = computed(
 )
 
 const onScroll = (e: Event): void => {
-  scrolled.value = (e.target as HTMLElement).scrollTop > 4
+  const el = e.target as HTMLElement
+  scrolled.value = el.scrollTop > 4
+  // 快速滚到已挂内容的末尾附近：立即补一批，不等空闲调度（最长 200ms）
+  if (
+    renderLimit.value < tabBooks.value.length
+    && el.scrollTop + el.clientHeight > el.scrollHeight - 1400
+  ) {
+    fillMore(true)
+  }
 }
+
+/* ---- 渐进挂载：切到大标签页不再一次性建几百张卡 ----
+ * 卡顿根因：v-for 一次性挂载当前标签页全部 BookCard（几百个组件实例 +
+ * 封面 img），切换瞬间主线程被打满，「很久才加载出来」。
+ * 做法（readest/koreader 同思路：先见后补）：先挂前 48 本立即可交互，
+ * 剩下的挂到 requestIdleCallback 空闲时段分批补齐，不打扰滚动手感。
+ */
+const RENDER_FIRST = 48
+const RENDER_BATCH = 16
+const renderLimit = ref(RENDER_FIRST)
+const visibleBooks = computed(() => tabBooks.value.slice(0, renderLimit.value))
+
+/** 当前补挂载任务的取消器；null = 没有待执行的补挂载 */
+let cancelFill: (() => void) | null = null
+
+/** 最近一次指针按下的时间：补挂载让路给用户操作，按住期间不跑批次 */
+let lastPointerAt = 0
+const markActivity = (): void => {
+  lastPointerAt = performance.now()
+}
+
+const fillMore = (force = false): void => {
+  cancelFill?.()
+  cancelFill = null
+  const total = tabBooks.value.length
+  if (renderLimit.value >= total) return
+  // 用户正在点/按/滑：这批不跑，稍后重试（近底强补除外，那时缺页比顺滑更要紧）
+  if (!force && performance.now() - lastPointerAt < 300) {
+    scheduleRenderMore()
+    return
+  }
+  renderLimit.value = Math.min(total, renderLimit.value + RENDER_BATCH)
+  if (renderLimit.value < total) scheduleRenderMore()
+}
+
+const scheduleRenderMore = (): void => {
+  if (cancelFill) return
+  const ric = window.requestIdleCallback
+  if (ric) {
+    const h = ric(() => fillMore(), { timeout: 200 })
+    cancelFill = () => window.cancelIdleCallback?.(h)
+  } else {
+    const h = window.setTimeout(() => fillMore(), 50)
+    cancelFill = () => clearTimeout(h)
+  }
+}
+
+// 切标签页：滚动回顶 + 重置到首批 + 内容入场动画。旧滚动位置对应的书还没
+// 挂出来，保位只会落进一个空网格，看起来就是「切换要加载很久」
+watch(shelfTab, () => {
+  renderLimit.value = RENDER_FIRST
+  scrollEl.value?.scrollTo({ top: 0 })
+  pulseGrid()
+  scheduleRenderMore()
+})
+
+// 换布局（网格↔列表、改列数）：网格结构变了，重置补挂载 + 入场动画，不动滚动位置
+watch(
+  () => settings.shelfLayout,
+  () => {
+    renderLimit.value = RENDER_FIRST
+    pulseGrid()
+    scheduleRenderMore()
+  },
+)
+
+// 同一标签页内书单变化（导入完成、liveQuery 刷新）：补齐到新长度即可
+watch(() => tabBooks.value.length, () => scheduleRenderMore())
+
+/**
+ * [shuge] 标签页切换的入场动画：整个书区淡入 + 轻微上浮（160ms）。
+ * 只动 opacity/transform（合成器友好），不给卡片做逐个 stagger——
+ * 几百张卡各自一层动画在 WebView 上是灾难。之前因为查「点击不切换」
+ * 的卡顿把它删了，后来查明真凶是浏览器滚动接管吞 click（见 tabUp），
+ * 这个动画本身没有性能问题，加回来。
+ */
+const gridEl = ref<HTMLElement | null>(null)
+const pulseGrid = (): void => {
+  void nextTick(() => {
+    const el = gridEl.value
+    if (!el) return
+    el.classList.remove('grid--anim')
+    void el.offsetWidth
+    el.classList.add('grid--anim')
+  })
+}
+
+onBeforeUnmount(() => {
+  cancelFill?.()
+  cancelFill = null
+})
 
 /**
  * 导入入口分派：
@@ -562,16 +663,12 @@ const revealTab = (): void => {
 }
 
 const chooseTab = (key: string): void => {
-  if (tabLongFired) {
-    tabLongFired = false
-    return
-  }
   setShelfTab(key)
   revealTab()
 }
 
 /** 上一页 / 下一页（不要首尾相接，滑到头就该停住） */
-const stepTab = (dir: number): void => {
+const stepTab = (dir: 1 | -1): void => {
   const list = shelfTabs.value
   if (list.length < 1) return
   const i = list.findIndex((t) => t.key === shelfTab.value)
@@ -596,17 +693,22 @@ useSwipe(
   { distance: 52, dominance: 1.2 },
 )
 
-/* ---- 标签页长按重命名 ---- */
+/* ---- 标签页长按重命名 + 滑动标签条不切页 ---- */
 let tabTimer = 0
 let tabLongFired = false
+/** 滑动标签条（位移明显）时不算点击：滑动是滚标签条，不是选页 */
+let tabDragged = false
 let tabX = 0
 let tabY = 0
+let tabDownT = 0
 
 const tabDown = (t: ShelfTab, e: PointerEvent): void => {
-  tabLongFired = false
-  if (t.key === '__all__' || t.key === '__untagged__') return
   tabX = e.clientX
   tabY = e.clientY
+  tabDownT = performance.now()
+  tabLongFired = false
+  tabDragged = false
+  if (t.key === '__all__' || t.key === '__untagged__') return
   clearTimeout(tabTimer)
   tabTimer = window.setTimeout(() => {
     tabLongFired = true
@@ -616,10 +718,34 @@ const tabDown = (t: ShelfTab, e: PointerEvent): void => {
 }
 
 const tabMove = (e: PointerEvent): void => {
-  if (Math.hypot(e.clientX - tabX, e.clientY - tabY) > 8) clearTimeout(tabTimer)
+  const dx = e.clientX - tabX
+  const dy = e.clientY - tabY
+  const d = Math.hypot(dx, dy)
+  // 滑过 24px 才算「在滚标签条」
+  if (d > 24) tabDragged = true
+  if (d > 8) clearTimeout(tabTimer)
 }
 
-const tabUp = (): void => clearTimeout(tabTimer)
+/**
+ * [shuge] 标签页不能靠 click 切换：标签栏是横向滚动容器，真实手指点按
+ * 普遍带 10-20px 漂移，超过浏览器的滚动判定阈值（约 10px）就被接管成
+ * 滚动手势，发出 pointercancel，click 根本不会派发（真机视频+事件日志
+ * 实锤：down → mv 13px → pointercancel，无 click）。所以改为在
+ * pointerup 里手动判定「这是次点按」：位移小、未长按、时间短。
+ * pointerleave 只说明手指移出按钮，长按计时器仍要清。
+ */
+const tabUp = (t: ShelfTab, e?: Event): void => {
+  clearTimeout(tabTimer)
+  if (!e || e.type !== 'pointerup') return
+  if (tabDragged || tabLongFired) return
+  if (performance.now() - tabDownT > 480) return
+  chooseTab(t.key)
+}
+
+const tabLeave = (): void => clearTimeout(tabTimer)
+
+/** 标签页管理面板 */
+const showTagManager = ref(false)
 
 /* ---- 顶栏双击（不是按钮的地方）回顶 ---- */
 let lastTopTap = 0
@@ -645,7 +771,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div ref="shelfEl" class="shelf">
+  <div ref="shelfEl" class="shelf" @pointerdown.capture="markActivity()">
     <header class="topbar" :class="{ scrolled: scrolled || selecting }" @pointerup="onTopTap">
       <!-- 批量管理：顶栏换成「取消 / 已选 n 本 / 全选」，跟系统相册一致 -->
       <template v-if="selecting">
@@ -741,11 +867,15 @@ onMounted(() => {
     </div>
 
     <!-- 标签页：全部 / 未分类 / 各题材。贴在顶栏下面，滚动时不动。
-         长按可重命名（「全部」「未分类」是虚拟页，不给改） -->
+         长按可重命名，尾部「管理」按钮进标签页管理面板。
+         data-noswipe：标签条自己横向滚（原生惯性，跟手速走），
+         不能被书架的全局左滑手势劫持——以前就是被劫持了才会
+         一滑标签条就切页、滚动也发涩 -->
     <nav
       v-if="hasTabs && !isEmpty"
       ref="tabsEl"
       class="tabs"
+      data-noswipe
       aria-label="按标签筛选"
     >
       <button
@@ -756,13 +886,21 @@ onMounted(() => {
         type="button"
         @pointerdown="tabDown(t, $event)"
         @pointermove="tabMove"
-        @pointerup="tabUp"
-        @pointercancel="tabUp"
-        @pointerleave="tabUp"
-        @click="chooseTab(t.key)"
+        @pointerup="tabUp(t, $event)"
+        @pointercancel="tabUp(t)"
+        @pointerleave="tabLeave()"
       >
         <span class="tab__label">{{ t.label }}</span>
         <span class="tab__count">{{ t.count }}</span>
+      </button>
+      <button
+        class="tab tab--manage"
+        type="button"
+        aria-label="管理标签页"
+        @click="showTagManager = true"
+      >
+        <SlidersHorizontal :size="13" :stroke-width="1.8" />
+        <span class="tab__label">管理</span>
       </button>
     </nav>
 
@@ -871,13 +1009,13 @@ onMounted(() => {
 
       <template v-else>
         <div
-          :key="shelfTab"
+          ref="gridEl"
           class="grid"
           :class="{ 'is-list': settings.shelfLayout === 'list' }"
           :style="{ '--cols': settings.shelfColumns }"
         >
           <div
-            v-for="book in tabBooks"
+            v-for="book in visibleBooks"
             :key="book.id"
             class="grid__item"
             :data-book-id="book.id"
@@ -895,7 +1033,7 @@ onMounted(() => {
           </div>
         </div>
 
-        <p v-if="!tabBooks.length" class="tabempty">
+        <p v-if="!loading && !tabBooks.length" class="tabempty">
           这个标签下还没有书
         </p>
 
@@ -1090,6 +1228,15 @@ onMounted(() => {
         @submit="submitTagRename"
       />
     </Transition>
+
+    <!-- 标签页管理：改名 / 删除标签，标签多了集中整理 -->
+    <Transition name="slide-down">
+      <TagManagerSheet
+        v-if="showTagManager"
+        @close="showTagManager = false"
+        @toast="toast"
+      />
+    </Transition>
   </div>
 </template>
 
@@ -1122,14 +1269,20 @@ onMounted(() => {
   grid-template-columns: repeat(var(--cols, 2), 1fr);
   gap: 18px clamp(8px, 2vw, 16px);
   padding: 14px 18px 0;
-  /* 切标签页时整片轻轻淡入上浮一下（:key 换 tab 会重建这块，动画随之重放） */
-  animation: grid-swap 220ms var(--ease) both;
 }
 
-@keyframes grid-swap {
+/* [shuge] 切标签页/换布局的入场动画：整层淡入 + 8px 上浮。
+   只动 opacity/transform（合成器通道，不碰布局），160ms 短促收尾。
+   之前因「点击不切换」误诊把它删过，真凶是浏览器把点按接管成滚动
+   （见 tabUp 注释），动画本身开销可控 */
+.grid--anim {
+  animation: grid-in 160ms var(--ease) both;
+}
+
+@keyframes grid-in {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
@@ -1137,9 +1290,8 @@ onMounted(() => {
   }
 }
 
-/* 系统开了「减少动态效果」就不动 */
 @media (prefers-reduced-motion: reduce) {
-  .grid {
+  .grid--anim {
     animation: none;
   }
 }
@@ -1160,6 +1312,12 @@ onMounted(() => {
 }
 
 .grid__item {
+  /* 列宽再窄也不许把卡片内容撑破（书名/作者的长单词） */
+  min-width: 0;
+  /* [shuge] 屏外的卡片跳过布局与绘制，几百本书时滚动明显更顺滑；
+     contain-intrinsic-size 给个估算占位（封面 3:4 + 文字区），避免滚动条跳动 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
@@ -1481,6 +1639,13 @@ onMounted(() => {
   font-weight: 600;
 }
 
+/* 尾部的「管理」入口：虚线胶囊，视觉上跟标签区分开 */
+.tab--manage {
+  gap: 5px;
+  color: var(--text-2);
+  border-style: dashed;
+}
+
 .tab__label {
   line-height: 1;
 }
@@ -1546,10 +1711,12 @@ onMounted(() => {
 
 .shelf__foot {
   /* 悬浮在屏幕左下的小浮块：原先是文档流里排在所有书后面的统计行，
-     书多了要滚很久才能看到；FAB 在右下，浮块放左下避让 */
+     书多了要滚很久才能看到；FAB 在右下，浮块放左下避让。
+     [shuge] 左右边距与右下 FAB 严格对称：left/right 都是 18px，
+     bottom 都是 20px + 安全区，两个浮块落在同一条底线上 */
   position: fixed;
-  left: 16px;
-  bottom: calc(16px + var(--safe-bottom));
+  left: 18px;
+  bottom: calc(20px + var(--safe-bottom));
   z-index: 20;
   padding: 7px 14px;
   border-radius: 999px;

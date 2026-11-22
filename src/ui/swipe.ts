@@ -26,8 +26,12 @@ export interface SwipeOptions {
 }
 
 const DEFAULT_IGNORE = 'input, textarea, select, [data-noswipe]'
-/** 方向判定阈值：小于这个位移先观望，别一抖就锁 */
-const LOCK_SLOP = 10
+/** 方向判定阈值：小于这个位移先观望，别一抖就锁。
+ * [shuge] 20px 而不是 10px：真实手指点按普遍带 10-15px 的自然漂移，
+ * 之前 10px 就锁定并 preventDefault，浏览器直接不派发 click——
+ * 表现为「点标签/点书没反应」（adb 模拟点击零漂移，复现不了）。
+ * 滑动触发阈值是 52px，锁定门槛提到 20px 不影响滑动判定 */
+const LOCK_SLOP = 20
 
 export const useSwipe = (
   el: Ref<HTMLElement | null>,

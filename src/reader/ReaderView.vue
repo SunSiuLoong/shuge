@@ -87,29 +87,43 @@ const toggleChrome = (): void => {
   }
 }
 
-const persist = (info: RelocateInfo): void => {
+const restored = ref(false)
+let lastRelocate: RelocateInfo | null = null
+
+const persistNow = async (): Promise<void> => {
   clearTimeout(saveTimer)
-  saveTimer = window.setTimeout(async () => {
-    if (book.value?.id == null) return
-    try {
-      // [shuge] 单页章节 foliate 的 fraction=(page-1)/(pages-2) 可能算出
-      // Infinity；clamp 到 0-1，避免脏数据进库后书架显示异常
-      const frac = Number.isFinite(info.fraction)
-        ? Math.min(1, Math.max(0, info.fraction))
-        : 0
-      await saveProgress({
-        bookId: book.value.id,
-        cfi: info.cfi || undefined,
-        fraction: frac,
-        chapterIndex: info.chapterIndex,
-        percent: frac,
-        chapterLabel: info.chapterLabel || undefined,
-        updatedAt: Date.now(),
-      })
-    } catch (e) {
-      console.error(e)
-    }
-  }, 600)
+  const info = lastRelocate
+  lastRelocate = null
+  if (!info || book.value?.id == null) return
+  try {
+    // [shuge] 单页章节 foliate 的 fraction=(page-1)/(pages-2) 可能算出
+    // Infinity；clamp 到 0-1，避免脏数据进库后书架显示异常
+    const frac = Number.isFinite(info.fraction)
+      ? Math.min(1, Math.max(0, info.fraction))
+      : 0
+    await saveProgress({
+      bookId: book.value.id,
+      // cfi 取不到时**不带这个键**：封面等纯图片章节拿不到 cfi，
+      // 写 undefined 会把之前存好的精确位置抹掉，下次只能按百分比粗定位
+      ...(info.cfi ? { cfi: info.cfi } : {}),
+      fraction: frac,
+      chapterIndex: info.chapterIndex,
+      percent: frac,
+      chapterLabel: info.chapterLabel || undefined,
+      updatedAt: Date.now(),
+    })
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+const persist = (info: RelocateInfo): void => {
+  // 恢复进度完成之前不写库：打开时 foliate 会先渲染默认位置（封面），
+  // 那次 relocate 若落库会把真进度覆盖成开头（同 readest 的 restored 门闩）
+  if (!restored.value) return
+  lastRelocate = info
+  clearTimeout(saveTimer)
+  saveTimer = window.setTimeout(persistNow, 600)
 }
 
 const applySettings = (): void => {
@@ -162,9 +176,9 @@ const onRelocate = (info: RelocateInfo): void => {
   chapterIndex.value = info.chapterIndex
   chapterLabel.value = info.chapterLabel
   if (!dragging.value) slideValue.value = Math.round(info.fraction * 1000)
-  bindContents()
-  // 翻页后布局才最终确定，再收一次溢出的负边距（cost 极低：无溢出的书一次判断即返回）
-  requestAnimationFrame(() => clampAll())
+  bindDocs()
+  // 溢出回收改到停手后的空闲时段（见 scheduleClamp）：不占翻页那一帧
+  scheduleClamp()
   persist(info)
 }
 
@@ -236,14 +250,21 @@ const onContentClick = (e: MouseEvent): void => {
  * 注意要等样式表生效后再跑（contentLoad 时 blob 链接的 CSS 可能还没应用，
  * 那时元素宽度还没撑开），所以 contentLoad 和 relocate 都调一次。
  */
+/** 每个文档最多扫两遍：第一遍定位出界块，第二遍补字体/图片落位后新出界的块。
+ *  再多扫就是纯开销——不设上限的话，长章节每次滚动停下都要整篇
+ *  querySelectorAll + 逐个 getBoundingClientRect，正好卡在用户下一次滑动前 */
+const clampPass = new WeakMap<Document, number>()
+
 const clampOverflow = (doc: Document): void => {
   const body = doc.body
   if (!body) return
+  if ((clampPass.get(doc) ?? 0) >= 2) return
   if (body.scrollWidth <= body.clientWidth + 1) return
   const br = body.getBoundingClientRect()
   if (br.width < 40) return
   const win = doc.defaultView
   if (!win) return
+  clampPass.set(doc, (clampPass.get(doc) ?? 0) + 1)
   const els = body.querySelectorAll<HTMLElement>(
     'h1,h2,h3,h4,h5,h6,div,p,section,article,figure,blockquote,table,pre',
   )
@@ -277,7 +298,26 @@ const clampAll = (): void => {
   }
 }
 
-const bindContents = (): void => {
+/**
+ * 翻页/滚动停下来之后再做溢出回收。
+ * 原先在 relocate 的那个 rAF 里同步跑：relocate 本身已经在算可见范围，
+ * 再叠一次全篇布局查询，正好压在用户下一次滑动的手指上——就是那种
+ * 「偶尔卡一小下」的来源。改成停手 220ms 后的空闲时段跑。
+ */
+let clampTimer = 0
+const scheduleClamp = (): void => {
+  clearTimeout(clampTimer)
+  clampTimer = window.setTimeout(() => {
+    const run = (): void => clampAll()
+    const idle = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number })
+      .requestIdleCallback
+    if (idle) idle(run, { timeout: 600 })
+    else run()
+  }, 220)
+}
+
+/** 只挂事件，不碰布局（relocate 每停一次都会调，必须便宜） */
+const bindDocs = (): void => {
   const contents = adapter.value?.el.renderer?.getContents?.() ?? []
   for (const item of contents) {
     const doc = item?.doc as Document | undefined
@@ -285,6 +325,10 @@ const bindContents = (): void => {
     boundDocs.add(doc)
     doc.addEventListener('click', onContentClick)
   }
+}
+
+const bindContents = (): void => {
+  bindDocs()
   clampAll()
 }
 
@@ -433,8 +477,8 @@ onMounted(async () => {
       error.value = '书库里找不到这本书'
       return
     }
-    // 引用模式（source='ref'）在这里按出处取原文件：OPFS 复制本走 getBookFile，
-    // 安卓 SAF uri / 桌面句柄走 resolveBookFile，失败给「重新导入」提示
+    // 数据源：引用书走 Capacitor 的本地文件 URL（原生流式读，见 refs.ts），
+    // 拿到的 File 支持切片随机访问，zip 只解当前章节
     const file = await resolveBookFile(book.value).catch(async (e) => {
       if (book.value?.source === 'ref') throw e
       return null
@@ -452,19 +496,26 @@ onMounted(async () => {
 
     const saved = await getProgress(props.bookId)
     const lastLocation = saved?.cfi || (saved?.fraction != null ? { fraction: saved.fraction } : undefined)
+    if (import.meta.env.DEV)
+      console.info(
+        `[shuge-prog] restore cfi=${saved?.cfi ? `${saved.cfi.slice(0, 50)}…(${saved.cfi.length}字)` : '无'} ` +
+          `frac=${saved?.fraction ?? '无'}`,
+      )
 
     // openBook 只建渲染器；样式注入完成后才 init 渲染首章，
     // 否则第一帧按 EPUB 默认白底画出来，暗色模式下会亮一下再变暗
     await a.openBook(file)
     await primeRenderer(a)
     await a.init(lastLocation)
+    // 恢复完成，之后的 relocate 才允许写库
+    restored.value = true
     toc.value = a.getToc()
     bookmarks.value = await listBookmarks(props.bookId)
     bindContents()
     loading.value = false
     await patchBook(props.bookId, { lastOpenedAt: Date.now() })
-
-    bumpChrome()
+    // [shuge] 进来就直接读：不自动弹顶/底栏（以前 bumpChrome 会亮 5 秒再收），
+    // 需要菜单时点一下正文中间即可
   } catch (e) {
     console.error(e)
     error.value = e instanceof Error ? e.message : '打开失败'
@@ -476,7 +527,9 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   window.removeEventListener('shuge:back', onSystemBack)
   clearTimeout(hideTimer)
-  clearTimeout(saveTimer)
+  clearTimeout(clampTimer)
+  // 退出时把还没落库的最后一次位置立即写入（不能 clearTimeout 丢掉）
+  void persistNow()
   adapter.value?.destroy()
 })
 </script>
@@ -487,9 +540,18 @@ onBeforeUnmount(() => {
     :class="{ 'is-scrolled': settings.flow === 'scrolled' }"
     :style="{ ...readerVars(palette), background: palette.bg, color: palette.text }"
   >
-    <div ref="host" class="reader__host" @click="onTap" />
+    <!-- 正文淡入：loading 结束的瞬间从 0 → 1（220ms），不再硬切。
+         打开慢的瞬间感受一半来自这里：spinner 咔一下消失换正文 -->
+    <div
+      ref="host"
+      class="reader__host"
+      :class="{ 'is-ready': !loading && !error }"
+      @click="onTap"
+    />
 
-    <div v-if="loading && !error" class="reader__state">正在打开…</div>
+    <Transition name="fade">
+      <div v-if="loading && !error" class="reader__state">正在打开…</div>
+    </Transition>
     <div v-if="error" class="reader__state reader__state--error">
       <p>{{ error }}</p>
       <button type="button" class="reader__back" @click="goBack">返回书架</button>
@@ -628,6 +690,22 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   z-index: 1;
+  /* [shuge] 打开完成前隐藏，is-ready 后 220ms 淡入——和 spinner 的淡出
+     交叉，正文是「浮现」而不是硬切。只动 opacity，合成器通道 */
+  opacity: 0;
+}
+
+.reader__host.is-ready {
+  opacity: 1;
+  transition: opacity 220ms var(--ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reader__host,
+  .reader__host.is-ready {
+    opacity: 1;
+    transition: none;
+  }
 }
 
 .reader__state {

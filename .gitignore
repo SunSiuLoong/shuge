@@ -51,3 +51,6 @@ assets_bak_*/
 assets_old_*/
 dist-m3e/
 dist_bak_*/
+
+# 本地临时工作区
+_tmp/

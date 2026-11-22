@@ -474,6 +474,12 @@ export class Paginator extends HTMLElement {
     #scrollBounds
     #touchState
     #touchScrolled
+    // [shuge] 触摸监听按 flow 选 passive：滚动模式下 #onTouchMove 直接早退，
+    // 不需要 preventDefault，可仍挂非 passive 监听的话 WebView 每帧都要等主线程
+    // 回话，滑动就会时不时顿一下。分页模式必须非 passive（要拦原生滚动自己做翻页）。
+    #touchBound
+    #touchDocs = []
+    #touchActive = false
     #lastVisibleRange
     constructor() {
         super()
@@ -587,7 +593,7 @@ export class Paginator extends HTMLElement {
             // [shuge] 连续滚动：接近已加载内容边缘时立即预载相邻章节，
             // 不等 debounce（手指拖动中跳过——主线程加载会掉帧；松手后的
             // 收尾滚动会再次触发）。#preloadNext 自带 #filling 防重入。
-            if (this.scrolled && !this.#filling && !this.#touchScrolled
+            if (this.scrolled && !this.#filling && !this.#touchActive
                 && this.#view && this.size > 0
                 && (this.#renderedViewSize - this.end < this.size * 3
                     || this.start < this.size * 2))
@@ -595,6 +601,8 @@ export class Paginator extends HTMLElement {
         })
         this.#container.addEventListener('scroll', debounce(() => {
             if (this.scrolled) {
+                // 滚动彻底停下：手指状态兜底复位（touchcancel 偶发收不到）
+                this.#touchActive = false
                 // [shuge] 程序化跳转（跨章/跳章/定位）落地后的第一个滚动事件
                 // 只用于重置状态，不再触发 relocate（写进度/更新锚点）
                 if (this.#justAnchored) {
@@ -605,14 +613,12 @@ export class Paginator extends HTMLElement {
             }
         }, 250))
 
-        const opts = { passive: false }
-        this.addEventListener('touchstart', this.#onTouchStart.bind(this), opts)
-        this.addEventListener('touchmove', this.#onTouchMove.bind(this), opts)
-        this.addEventListener('touchend', this.#onTouchEnd.bind(this))
+        this.#bindTouch()
         this.addEventListener('load', ({ detail: { doc } }) => {
-            doc.addEventListener('touchstart', this.#onTouchStart.bind(this), opts)
-            doc.addEventListener('touchmove', this.#onTouchMove.bind(this), opts)
-            doc.addEventListener('touchend', this.#onTouchEnd.bind(this))
+            if (!this.#touchDocs.includes(doc)) this.#touchDocs.push(doc)
+            // 只留最近 12 个：读完几百章后别把旧 iframe 的 document 一直攒着
+            if (this.#touchDocs.length > 12) this.#touchDocs = this.#touchDocs.slice(-12)
+            this.#bindTouch()
         })
 
         this.addEventListener('relocate', ({ detail }) => {
@@ -683,6 +689,7 @@ export class Paginator extends HTMLElement {
                         void this.#preloadNext()
                     }
                 }
+                this.#bindTouch()
                 this.render()
                 break
             case 'gap':
@@ -923,7 +930,28 @@ export class Paginator extends HTMLElement {
             this.#locked = false
         })
     }
+    /** 按当前 flow 重新绑定触摸监听（passive 只能在注册时定，切模式要重挂） */
+    #bindTouch() {
+        if (!this.#touchBound) {
+            this.#touchBound = {
+                start: this.#onTouchStart.bind(this),
+                move: this.#onTouchMove.bind(this),
+                end: this.#onTouchEnd.bind(this),
+            }
+        }
+        const opts = { passive: this.scrolled }
+        const { start, move, end } = this.#touchBound
+        for (const target of [this, ...this.#touchDocs]) {
+            target.removeEventListener('touchstart', start)
+            target.removeEventListener('touchmove', move)
+            target.removeEventListener('touchend', end)
+            target.addEventListener('touchstart', start, opts)
+            target.addEventListener('touchmove', move, opts)
+            target.addEventListener('touchend', end)
+        }
+    }
     #onTouchStart(e) {
+        this.#touchActive = true
         const touch = e.changedTouches[0]
         this.#touchState = {
             x: touch?.screenX, y: touch?.screenY,
@@ -955,6 +983,7 @@ export class Paginator extends HTMLElement {
     }
     #onTouchEnd() {
         this.#touchScrolled = false
+        this.#touchActive = false
         if (this.scrolled) return
 
         // XXX: Firefox seems to report scale as 1... sometimes...?

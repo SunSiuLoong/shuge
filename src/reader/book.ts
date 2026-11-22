@@ -17,12 +17,18 @@ export interface FoliateBook {
 /**
  * 用 foliate 的 zip 加载器打开 EPUB。
  * 与 vendor/view.js 内部逻辑一致，抽出来是为了导入阶段不必加载渲染器。
+ *
+ * 数据源是 Blob（OPFS 复制本，或安卓经本地文件 URL 取回的引用原文件）——
+ * 两者都支持 `slice()` 切片随机访问，zip.js 只解压当前需要的条目，
+ * 打开一本书只读中央目录 + 当前章节，不会整本解压。
  */
 export const openBook = async (file: Blob): Promise<FoliateBook> => {
   const { configure, ZipReader, BlobReader, TextWriter, BlobWriter } = await import(
     '../vendor/foliate-js/vendor/zip.js'
   )
-  configure({ useWebWorkers: false })
+  // chunkSize 必须在这里给：zip.js 的 getEntriesGenerator 会用 config.chunkSize
+  // 覆盖 reader.chunkSize（默认 65536），经 bridge 分块读时 64KB 一块太碎
+  configure({ useWebWorkers: false, chunkSize: 1024 * 1024 } as never)
   const reader = new ZipReader(new BlobReader(file))
   const entries = await reader.getEntries()
   const map = new Map<string, any>(entries.map((e: any) => [e.filename, e]))

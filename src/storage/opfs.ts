@@ -70,7 +70,9 @@ export const clearTrash = (): Promise<number> => rpc<number>({ type: 'clearTrash
 
 export const getBookFile = async (fileName: string): Promise<File | null> => {
   try {
-    const dir = await booksDir(false)
+    // 不走 booksDir()：直接从根句柄三级定位，少一层 rpc 包装
+    const root = await navigator.storage.getDirectory()
+    const dir = await root.getDirectoryHandle(BOOKS_DIR, { create: false })
     const handle = await dir.getFileHandle(fileName, { create: false })
     return await handle.getFile()
   } catch {

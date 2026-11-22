@@ -81,11 +81,21 @@ export const loggedInOf = (html: string): boolean => {
 
 /* ---------------- 签到 ---------------- */
 
-/** dsu_paulsign 的表情键。页面解析失败时的兜底（标准插件的表情集） */
-const FALLBACK_EMOTIONS = [
-  'kx', 'ng', 'ym', 'wl', 'nu', 'fd', 'yl', 'shuai',
-  'ka', 'px', 'jy', 'wh', 'aim', 'pq', 'lh', 'dk',
-  'fan', 'xy', 'yd', 'zq',
+/**
+ * dsu_paulsign 的表情键（插件 img/emot 目录全集，站点默认装这 9 个）。
+ * 页面解析失败时的兜底——千万别往里加别的键，站点会回
+ * 「你选择的心情不正确」。
+ */
+const FALLBACK_EMOTIONS: QmEmotion[] = [
+  { key: 'kx', label: '开心' },
+  { key: 'ng', label: '难过' },
+  { key: 'ym', label: '郁闷' },
+  { key: 'wl', label: '无聊' },
+  { key: 'nu', label: '怒' },
+  { key: 'ch', label: '擦汗' },
+  { key: 'fd', label: '奋斗' },
+  { key: 'yl', label: '慵懒' },
+  { key: 'shuai', label: '衰' },
 ]
 
 export interface QmEmotion {
@@ -104,6 +114,32 @@ export interface SignState {
   rawBody?: string
 }
 
+/**
+ * 表情选项有两种渲染：桌面版是 radio input，手机版（touch 模板）是
+ * <select name="qdxq"> 里的 option——两种都要解析。
+ * 拉成纯函数方便单测（真站页面结构见 _tmp/sign_touch.htm 快照）。
+ */
+export const emotionsOf = (html: string): QmEmotion[] => {
+  const out: QmEmotion[] = []
+  const re = /name="qdxq"[^>]*value="([a-z0-9_]+)"/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(html))) {
+    if (out.some((e) => e.key === m![1])) continue
+    const after = html.slice(re.lastIndex, re.lastIndex + 400)
+    const alt = /alt="([^"]+)"/.exec(after)?.[1]
+    out.push({ key: m[1], label: alt || m[1] })
+  }
+  if (!out.length) {
+    const sel = /<select[^>]*name="qdxq"[^>]*>([\s\S]*?)<\/select>/i.exec(html)?.[1]
+    const reOpt = /<option[^>]*value="([^"]+)"[^>]*>\s*([^<]*?)\s*</g
+    let o: RegExpExecArray | null
+    while (sel && (o = reOpt.exec(sel))) {
+      if (!out.some((e) => e.key === o![1])) out.push({ key: o[1], label: o[2] || o[1] })
+    }
+  }
+  return out
+}
+
 export const getSignState = async (): Promise<SignState> => {
   const r = await qmGet('/plugin.php?id=dsu_paulsign:sign')
   const loggedIn = loggedInOf(r.body)
@@ -112,17 +148,7 @@ export const getSignState = async (): Promise<SignState> => {
   }
   const signed = /已经签到|今日已签|签到时间还未开始|签到过了/.test(r.body)
   const formhash = formhashOf(r.body)
-  const emotions: QmEmotion[] = []
-  // dsu_paulsign 的选项是 <input type="radio" name="qdxq" value="kx" ...> <img alt="开心">，
-  // input 和 img 之间隔几个标签、顺序也可能反过来，所以按位置往后找最近的 alt
-  const re = /name="qdxq"[^>]*value="([a-z0-9_]+)"/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(r.body))) {
-    if (emotions.some((e) => e.key === m![1])) continue
-    const after = r.body.slice(re.lastIndex, re.lastIndex + 400)
-    const alt = /alt="([^"]+)"/.exec(after)?.[1]
-    emotions.push({ key: m[1], label: alt || m[1] })
-  }
+  const emotions = emotionsOf(r.body)
   return { ok: true, loggedIn: true, signed, formhash, emotions, message: '', rawBody: r.body }
 }
 
@@ -137,8 +163,8 @@ export interface SignOutcome {
  *
  * 提交字段按 dsu_paulsign 的表单来（对照插件源码与真站签到页）：
  * qdmode=1（说一句话模式）、qdxq=心情、todaysay=想说的话、fastreply=0。
- * 站点限制 todaysay 最少 2 个、最多 30 个中文字符——诗词原句超长就截断，
- * 短于 2 就垫两个字。
+ * 站点限制 todaysay 最少 3 个、最多 50 个中文字符——诗词原句超长就截断，
+ * 短于 3 就垫足。
  */
 export const doSign = async (): Promise<SignOutcome> => {
   const state = await getSignState()
@@ -151,14 +177,13 @@ export const doSign = async (): Promise<SignOutcome> => {
     return { ok: false, message: `拿不到表单令牌（formhash）(${snippet})` }
   }
 
-  const pool = state.emotions.length
-    ? state.emotions
-    : FALLBACK_EMOTIONS.map((k) => ({ key: k, label: k }))
+  const pool = state.emotions.length ? state.emotions : FALLBACK_EMOTIONS
   const emotion = pool[Math.floor(Math.random() * pool.length)]
   const { randomPoem } = await import('./poems')
   const poem = randomPoem()
   let mood = poem.text.slice(0, 30)
-  while ([...mood].length < 2) mood += '…'
+  // 站点限制 todaysay 最少 3 个中文字符（手机版页面明写「最少3个,最多50个」）
+  while ([...mood].length < 3) mood += '…'
 
   const body = new URLSearchParams({
     formhash: state.formhash,

@@ -16,6 +16,9 @@ export const DONATE_IMAGE = donateImage
 
 export const LICENSE_NAME = 'MIT'
 
+/** 开发者联系邮箱：关于页展示 + mailto 一键联系 */
+export const CONTACT_EMAIL = '1405968774@qq.com'
+
 /** 外部链接统一走这里：App 内优先交给系统浏览器，Web 端直接开新标签 */
 export const openExternal = (url: string): void => {
   if (!url) return
