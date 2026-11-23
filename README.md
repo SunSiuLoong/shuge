@@ -95,3 +95,5 @@ docs/decisions.md         选型、踩坑、对 vendor 的改动
 ## 许可
 
 MIT，见 [`LICENSE`](LICENSE)。渲染引擎 [foliate-js](https://github.com/johnfactotum/foliate-js) 为 MIT，源码 vendor 在 `src/vendor/foliate-js`，锁定 commit 记在同目录 `COMMIT.txt`。
+
+内置字体为 [Noto Serif SC](https://fonts.google.com/noto/specimen/Noto+Serif+SC)（思源宋体同源），SIL Open Font License 1.1，可商用、可嵌入、可再分发；子集化文件 `public/fonts/serif.woff`，许可全文见 [`public/fonts/OFL.txt`](public/fonts/OFL.txt)。其余界面与正文回退字体均来自系统字体栈，不随 App 分发。用户自行导入的字体只存本机，不上传、不再分发。

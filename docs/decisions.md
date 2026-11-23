@@ -54,6 +54,10 @@ margin = 用户设置的边距
 
 正文默认思源宋体（Noto Serif SC，OFL）。原字体 11.6MB OTF，用 fontTools 子集化为 GB2312 全集 + Latin + 中文标点，输出 `public/fonts/serif.woff`，1.8MB。
 
+许可是 **SIL Open Font License 1.1**：可商用、可嵌入 App、可再分发、可子集化；限制只有两条——不能单独售卖字体本身，修改后版本不能继续用保留字体名（Reserved Font Name）。我们没改字形、也没改字体内部名称（`@font-face` 里的 `Shuge Serif` 只是 CSS 别名，不动字体 name 表），家族名仍是 Noto Serif SC，符合 RFN 规则。许可全文随包放在 `public/fonts/OFL.txt`（会一起打进 APK 的 `assets/public/fonts/`），满足 OFL「每份副本需随附版权声明与许可」的要求。
+
+其余字体全部来自**系统字体栈**（`-apple-system`、`PingFang SC`、`Microsoft YaHei`、`Noto Sans SC` 等），不随 App 分发，不涉及授权。用户自己通过「导入字体」加进来的字体只存在本机 IndexedDB，App 不做二次分发。
+
 注入阅读样式的 `@font-face` **必须用绝对 URL**（`new URL('fonts/serif.woff', document.baseURI)`），因为样式是注入到 iframe 文档里的，相对路径会解析到 iframe 的 base。
 
 ## 9. PWA
