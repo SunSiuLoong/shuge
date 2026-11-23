@@ -11,6 +11,7 @@
  */
 import { registerPlugin } from '@capacitor/core'
 import { Capacitor } from '@capacitor/core'
+import { logEvent, logWarn } from '../log'
 
 export const QM_BASE = 'https://www.1000qm.vip'
 export const QM_NAME = '阡陌居'
@@ -252,6 +253,32 @@ type Fetcher = (path: string) => Promise<{ body: string }>
  */
 const normalizeAmp = (html: string): string => html.replace(/&amp;/g, '&')
 
+/**
+ * Discuz 提示文案的容器（alert / showmessage / msgbox …）。
+ *
+ * 为什么要分容器：申请成功后站点基本都会 302 回任务列表页，那一页里
+ * 别的任务还挂着「您已申请过此任务」的灰字状态。以前拿整页去匹配，
+ * 就会出现「刚领到却提示今天已经领过了」的误判。
+ */
+const messageZoneOf = (html: string): string =>
+  /<div[^>]*class="[^"]*(?:alert|showmessage|msgbox|tip)[^"]*"[^>]*>([\s\S]*?)<\/div>/i.exec(html)?.[1] ??
+  ''
+
+/** 还带「立即申请」链接 → 这一页是任务列表，不是结果提示页 */
+const looksLikeTaskList = (html: string): boolean => /do=apply&id=\d+/.test(normalizeAmp(html))
+
+/**
+ * 单次申请的判定：成功优先 → 提示区里认「已申请过」→ 其余交回调用方报未知。
+ * 提示区缺失且这页像列表页时，不猜「已申请过」（宁可报未知，也别把成功说成已领过）。
+ */
+const applyOutcome = (body: string): 'applied' | 'already' | 'unknown' => {
+  if (/申请成功|申请的任务已完成|任务已成功完成/.test(body)) return 'applied'
+  const zone = messageZoneOf(body)
+  const scope = zone || (looksLikeTaskList(body) ? '' : body)
+  if (/您已申请过此任务|本期您已申请过/.test(scope)) return 'already'
+  return 'unknown'
+}
+
 const taskIdsOf = (html: string, kind: 'apply' | 'draw'): string[] => {
   const ids = new Set<string>()
   const re = new RegExp(`home\\.php\\?mod=task&do=${kind}&id=(\\d+)`, 'g')
@@ -276,17 +303,32 @@ export const runTaskClaim = async (fetch: Fetcher): Promise<TaskFlowResult> => {
   // 1) 新任务：立即申请（每日威望红包在这里，申请即到账）
   const newHtml = (await fetch('/home.php?mod=task&item=new')).body
   if (loggedInOf(newHtml)) {
-    for (const id of taskIdsOf(newHtml, 'apply')) {
+    const applyIds = taskIdsOf(newHtml, 'apply')
+    logEvent('qm', `新任务页：${applyIds.length} 个可申请（${applyIds.join(',') || '无'}）`)
+    for (const id of applyIds) {
       try {
         const res = await fetch(`/home.php?mod=task&do=apply&id=${id}`)
-        if (/任务申请成功/.test(res.body)) {
+        const outcome = applyOutcome(res.body)
+        // 提示区文字才是站点给的正式回执（拒绝理由也在这里）
+        const zoneText = stripTags(messageZoneOf(res.body)).replace(/\s+/g, ' ').trim().slice(0, 80)
+        // 把判定结果落进日志：下次再出现「明明领到却说已领过」，直接看这行
+        const snippet = stripTags(messageZoneOf(res.body) || res.body).replace(/\s+/g, ' ').slice(0, 60)
+        logEvent(
+          'qm',
+          `申请任务 ${id} → ${outcome}（${res.body.length}B）「${snippet}」`,
+          outcome === 'unknown' ? 'warn' : 'info',
+        )
+        if (outcome === 'applied') {
           applied.push(id)
-        } else if (/您已申请过此任务|本期您已申请过/.test(res.body)) {
+        } else if (outcome === 'already') {
           already.push(id)
         } else {
-          fails.push(stripTags(res.body).replace(/\s+/g, ' ').slice(0, 80))
+          // 有提示区 → 站点自己的拒绝理由（用户组/名额/前置任务）；
+          // 没提示区 → 这页不是结果页（多半直接跳回了列表），别把列表灰字当失败原因
+          fails.push(zoneText || '站点没有返回明确结果，稍后再试一次')
         }
-      } catch {
+      } catch (e) {
+        logWarn('qm', `申请任务 ${id} 异常：${e instanceof Error ? e.message : String(e)}`)
         /* 单个任务失败不影响其它 */
       }
     }
@@ -344,13 +386,20 @@ export const claimPrestigeTasks = async (): Promise<TaskClaimResult> => {
 
   if (r.applied || r.already || r.drawn) {
     const parts: string[] = []
-    if (r.applied) parts.push(`申请了 ${r.applied} 项任务，威望红包已到账`)
-    if (r.already && !r.applied) parts.push('今天已经领过了')
-    if (r.drawn) parts.push(`领取了 ${r.drawn} 项奖励`)
+    if (r.applied) parts.push(`威望红包已到账（本次申请 ${r.applied} 项）`)
+    if (r.already && !r.applied) parts.push('今日威望此前已领过，今天不必再领')
+    if (r.drawn) parts.push(`另有 ${r.drawn} 项奖励已领取`)
+    logEvent('qm', `领威望结果：${parts.join('；')}`)
     return { ok: true, applied: r.applied, drawn: r.drawn, message: parts.join('；') }
   }
   if (r.doneToday) {
-    return { ok: true, applied: 0, drawn: 0, message: '今天已经领过了（已完成列表里有红包任务）' }
+    logEvent('qm', '领威望结果：已完成列表里有今天的红包任务')
+    return {
+      ok: true,
+      applied: 0,
+      drawn: 0,
+      message: '今日威望已领过（已完成任务里能看到今天的红包记录）',
+    }
   }
   return {
     ok: false,

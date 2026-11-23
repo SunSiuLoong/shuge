@@ -2,6 +2,8 @@ import { computed, ref, watch } from 'vue'
 import { liveQuery } from 'dexie'
 import { db } from '../db'
 import type { Book, Progress } from '../types'
+import { logError, logEvent } from '../log'
+import { normalizeOrder, sortByTagOrder } from './tagOrder'
 
 export type SortKey = 'recent' | 'added' | 'title' | 'author' | 'rating'
 /** 书架顶部的标签页：__all__ = 全部，__untagged__ = 未分类，其余是题材名 */
@@ -106,14 +108,45 @@ export interface ShelfTab {
 }
 
 /**
- * 标签页列表：全部 → 未分类（有才算）→ 各题材（按书目数降序）。
+ * 标签页自定义顺序（拖拽排序的结果），只存标签名数组。
+ * 没排序过的标签按「本数降序」排在已排序的后面——新加标签不需要用户手动挪。
+ */
+const TAG_ORDER_KEY = 'shuge.tagOrder.v1'
+
+const readTagOrder = (): string[] => {
+  try {
+    return normalizeOrder(JSON.parse(localStorage.getItem(TAG_ORDER_KEY) ?? '[]'))
+  } catch {
+    return []
+  }
+}
+
+export const tagOrder = ref<string[]>(readTagOrder())
+
+/** 保存顺序。传进来的名单以当前真实存在为准，删掉的标签不再占位 */
+export const setTagOrder = (names: string[]): void => {
+  const exist = new Set(allTags.value.map((t) => t.name))
+  const next = names.filter((n) => exist.has(n))
+  tagOrder.value = next
+  try {
+    localStorage.setItem(TAG_ORDER_KEY, JSON.stringify(next))
+  } catch {
+    /* 存不下就只在本次会话生效 */
+  }
+}
+
+/**
+ * 标签页列表：全部 → 未分类（有才算）→ 各题材（按自定义顺序，未排序的按书目数降序）。
  * 顺序刻意让「全部」永远在第一格，切回来不用找。
  */
 export const shelfTabs = computed<ShelfTab[]>(() => {
   const out: ShelfTab[] = [{ key: '__all__', label: '全部', count: books.value.length }]
   const untagged = untaggedCount.value
   if (untagged > 0) out.push({ key: '__untagged__', label: '未分类', count: untagged })
-  for (const t of allTags.value) out.push({ key: t.name, label: t.name, count: t.count })
+  // 自定义顺序优先；没排过的按本数降序接在后面，新标签不用手动挪
+  for (const t of sortByTagOrder(allTags.value, tagOrder.value)) {
+    out.push({ key: t.name, label: t.name, count: t.count })
+  }
   return out
 })
 
@@ -153,6 +186,7 @@ let started = false
 export const startShelf = (): void => {
   if (started) return
   started = true
+  let firstLoad = true
   liveQuery(async () => {
     const [all, ps] = await Promise.all([db.books.toArray(), db.progress.toArray()])
     return { all, ps }
@@ -163,8 +197,15 @@ export const startShelf = (): void => {
       for (const p of ps) map[p.bookId] = p
       progressMap.value = map
       loading.value = false
+      // 首帧落一条基线：以后闪退，能看出当时书库多大规模
+      if (firstLoad) {
+        firstLoad = false
+        const tagCount = new Set(all.flatMap((b) => b.tags ?? [])).size
+        logEvent('shelf', `书架载入 ${all.length} 本 · ${tagCount} 个标签`)
+      }
     },
     error: (e) => {
+      logError('shelf', `书架载入失败：${e instanceof Error ? e.message : String(e)}`)
       console.error(e)
       loading.value = false
     },

@@ -1,7 +1,8 @@
 import { ref } from 'vue'
-import { db, patchBook } from '../db'
+import { db, patchBook, patchTagsBulk } from '../db'
 import type { Book } from '../types'
 import { settings } from '../settings'
+import { logError, logEvent } from '../log'
 import { lastSourceError, pickBest, searchSources } from './sources'
 import { tagsFromName } from './tags'
 import type { SourceCandidate } from './types'
@@ -159,19 +160,41 @@ export const enrichMany = async (list: Book[], opts: EnrichOptions = {}): Promis
  *
  * v1.9.0 之前导入的书没有 tags 字段，但那时候 title 还没做清洗，
  * 往往还带着 `【W18】…[游戏异界]v1.0` 的原始痕迹，正好能反向提取。
- * 纯本地操作、幂等，启动时跑一次不影响速度。
+ *
+ * ⚠️ 只跑一次：这个函数挑的是「没有标签的书」，而用户手动删空标签的书
+ * 也是「没有标签的书」。以前每次书架挂载都跑，结果就是删完的标签页过一会儿
+ * 又原样长回来（书名里的括号就是标签来源）。跑过就记标记，此后不再动。
  */
+const BACKFILL_KEY = 'shuge.backfillTags.v2'
+
 export const backfillTags = async (): Promise<number> => {
+  try {
+    if (localStorage.getItem(BACKFILL_KEY) === 'done') return 0
+  } catch {
+    /* 读不到标记就不跑，宁可不补也不能反悔用户的删除 */
+    return 0
+  }
   const all = await db.books.toArray()
-  const need = all.filter((b) => !b.tags?.length)
-  if (!need.length) return 0
-  let patched = 0
+  const need = all.filter((b) => !b.tags?.length && b.id != null)
+  const rows: Array<{ id: number; tags: string[] }> = []
   for (const b of need) {
     const tags = tagsFromName(b.title, b.author).map((t) => t.name)
-    if (tags.length && b.id != null) {
-      await patchBook(b.id, { tags })
-      patched += 1
+    if (tags.length && b.id != null) rows.push({ id: b.id, tags })
+  }
+  let patched = 0
+  if (rows.length) {
+    try {
+      patched = await patchTagsBulk(rows)
+    } catch (e) {
+      logError('meta', `老书补标签失败：${e instanceof Error ? e.message : String(e)}`)
+      return 0
     }
   }
+  try {
+    localStorage.setItem(BACKFILL_KEY, 'done')
+  } catch {
+    /* ignore */
+  }
+  if (patched) logEvent('meta', `老书补标签 ${patched} 本（仅首次，之后不再自动补）`)
   return patched
 }

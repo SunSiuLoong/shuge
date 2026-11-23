@@ -89,6 +89,32 @@ export const patchBook = (id: number, patch: Partial<Book>): Promise<number> =>
     update: (key: number, changes: Record<string, unknown>) => Promise<number>
   }).update(id, cleanPatch(patch))
 
+/**
+ * 批量改写标签：所有书放进同一个读写事务，一次提交。
+ *
+ * 为什么必须批量：
+ * 书架用 liveQuery 订阅 books + progress，Dexie 每完成一个写事务就全量重读一次
+ * （Book 里还带封面 Blob）。逐本 update 删一个大标签 = 几百次事务 = 几百次全量
+ * 重读 + 几百次整页重渲染，安卓 WebView 直接按 OOM 杀进程——表现就是「删标签删
+ * 到一半 App 闪退」。合成一个事务后只触发一次重算。
+ */
+export const patchTagsBulk = async (
+  changes: Array<{ id: number; tags: string[] | undefined }>,
+): Promise<number> => {
+  if (!changes.length) return 0
+  return db.transaction('rw', db.books, async () => {
+    const table = db.books as unknown as {
+      update: (key: number, changes: Record<string, unknown>) => Promise<number>
+    }
+    let n = 0
+    for (const c of changes) {
+      // 空数组要写 null（Dexie 不认 undefined），否则标签页会留一个「空壳」
+      n += await table.update(c.id, { tags: c.tags && c.tags.length ? c.tags : null })
+    }
+    return n
+  })
+}
+
 export const findByFingerprint = (fingerprint: string): Promise<Book | undefined> =>
   db.books.where('fingerprint').equals(fingerprint).first()
 

@@ -32,6 +32,8 @@ import {
 import { isNative } from '../native'
 import { Mail } from 'lucide-vue-next'
 import ConfirmDialog from '../ui/ConfirmDialog.vue'
+import LogSheet from '../ui/LogSheet.vue'
+import { getLogs } from '../log'
 
 /**
  * 「关于」这一组：存储、版本、检查更新、仓库、建议、爱发电、打赏码。
@@ -49,6 +51,14 @@ const latest = ref<ReleaseInfo | null>(null)
 const message = ref('')
 
 const info = ref<StorageInfo | null>(null)
+
+/** 运行日志面板：闪退/白屏后第一手证据，条数随打开刷新 */
+const showLogs = ref(false)
+const logCount = ref(0)
+const openLogs = (): void => {
+  logCount.value = getLogs().length
+  showLogs.value = true
+}
 
 /** 回收站：删书时选「保留本地文件」的副本落在这里 */
 const trash = ref<{ name: string; size: number }[]>([])
@@ -133,6 +143,7 @@ const download = (): void => {
 onMounted(() => {
   void refreshStorage()
   void refreshTrash()
+  logCount.value = getLogs().length
 })
 </script>
 
@@ -172,6 +183,15 @@ onMounted(() => {
       <span>当前版本</span>
       <span class="line__value">v{{ APP_VERSION }}</span>
     </div>
+
+    <!-- 运行日志：闪退、白屏之后先看这里 -->
+    <button class="line line--btn" type="button" @click="openLogs">
+      <span>运行日志</span>
+      <span class="line__value">
+        {{ logCount }} 条
+        <ChevronRight :size="15" :stroke-width="2" />
+      </span>
+    </button>
 
     <button class="line line--btn" type="button" :disabled="state === 'checking'" @click="runCheck">
       <span>检查更新</span>
@@ -273,6 +293,8 @@ onMounted(() => {
         @confirm="doClearTrash"
       />
     </Transition>
+
+    <LogSheet v-if="showLogs" @close="showLogs = false" />
   </div>
 </template>
 
