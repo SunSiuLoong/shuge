@@ -21,6 +21,7 @@ import { buildReaderCSS, READER_PALETTES, readerVars, type CustomFontRef } from 
 import { fontRefOf } from './fonts'
 import TocDrawer from './TocDrawer.vue'
 import SettingsSheet from './SettingsSheet.vue'
+import FontManagerSheet from './FontManagerSheet.vue'
 import SearchSheet from './SearchSheet.vue'
 import LinkSheet from '../links/LinkSheet.vue'
 
@@ -35,6 +36,7 @@ const error = ref<string | null>(null)
 const chrome = ref(false)
 const showToc = ref(false)
 const showSettings = ref(false)
+const showFontMgr = ref(false)
 const showSearch = ref(false)
 const showLinks = ref(false)
 const searchRef = ref<InstanceType<typeof SearchSheet> | null>(null)
@@ -635,7 +637,11 @@ onBeforeUnmount(() => {
 
     <!-- 遮罩与浮层 -->
     <Transition name="fade">
-      <div v-if="showSettings || showSearch" class="scrim" @click="showSettings = false; showSearch = false" />
+      <div
+        v-if="showSettings || showFontMgr || showSearch"
+        class="scrim"
+        @click="showSettings = false; showFontMgr = false; showSearch = false"
+      />
     </Transition>
 
     <Transition name="slide-down">
@@ -644,6 +650,18 @@ onBeforeUnmount(() => {
         :book="book"
         @click.stop
         @book-font="onBookFont"
+        @open-font-manager="showSettings = false; showFontMgr = true"
+      />
+    </Transition>
+
+    <!-- 字体管理：二级面板，从排版菜单的「管理字体」进 -->
+    <Transition name="slide-down">
+      <FontManagerSheet
+        v-if="showFontMgr"
+        :book="book"
+        @click.stop
+        @book-font="onBookFont"
+        @close="showFontMgr = false"
       />
     </Transition>
 

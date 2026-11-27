@@ -50,6 +50,8 @@ export interface ReaderSettings {
   showPercent: boolean
   /** 书架顶部的标签页（全部 / 未分类 / 各题材） */
   shelfTabs: boolean
+  /** 书卡封面下方的小标签行（含「未分类」占位） */
+  showCardTags: boolean
   /** 莫奈主色的来源 */
   monetSource: MonetSource
   /** 自选/图片取色得到的颜色，system 模式下作为取不到系统色时的兜底 */
@@ -92,6 +94,7 @@ const DEFAULTS: ReaderSettings = {
   shelfColumns: 2,
   showPercent: false,
   shelfTabs: true,
+  showCardTags: true,
   monetSource: 'system',
   monetHex: '#7c8f7a',
   ratingSource: 'auto',
@@ -139,6 +142,7 @@ const migrate = (raw: Record<string, unknown>): Partial<ReaderSettings> => {
   out.shelfColumns = Number.isFinite(cols) ? Math.min(4, Math.max(2, Math.round(cols))) : 2
   if (typeof out.showPercent !== 'boolean') out.showPercent = false
   if (typeof out.shelfTabs !== 'boolean') out.shelfTabs = true
+  if (typeof out.showCardTags !== 'boolean') out.showCardTags = true
   out.monetSource = pick(MONET_SOURCES, out.monetSource, 'system')
   if (typeof out.showReview !== 'boolean') out.showReview = true
   if (typeof out.importByRef !== 'boolean') out.importByRef = true

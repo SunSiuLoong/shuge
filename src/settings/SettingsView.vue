@@ -471,6 +471,11 @@ onMounted(syncApplied)
           </label>
 
           <label class="row row--switch">
+            <span>书卡标签</span>
+            <input v-model="settings.showCardTags" class="toggle" type="checkbox" />
+          </label>
+
+          <label class="row row--switch">
             <span>引用原文件（不复制）</span>
             <input v-model="settings.importByRef" class="toggle" type="checkbox" />
           </label>

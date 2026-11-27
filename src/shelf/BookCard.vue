@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { Book } from '../types'
 import { coverUrlOf } from './useCoverUrl'
+import { settings } from '../settings'
 
 const props = withDefaults(
   defineProps<{
@@ -143,8 +144,9 @@ const moreTags = computed(() => Math.max(0, (props.book.tags?.length ?? 0) - 2))
       <p class="card__title">{{ book.title }}</p>
       <!-- 作者单独一行，不再和百分比挤在一起 -->
       <p class="card__author">{{ book.author }}</p>
-      <!-- 固定高度的标签行：没标签显示「未分类」，同一排卡片高度一致 -->
-      <p class="card__tags">
+      <!-- 固定高度的标签行：没标签显示「未分类」，同一排卡片高度一致。
+           设置里关掉「书卡标签」后整行不渲染 -->
+      <p v-if="settings.showCardTags" class="card__tags">
         <template v-if="visibleTags.length">
           <span v-for="t in visibleTags" :key="t" class="card__tag">{{ t }}</span>
           <span v-if="moreTags" class="card__tag card__tag--more">+{{ moreTags }}</span>

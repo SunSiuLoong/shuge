@@ -1183,20 +1183,31 @@ export class Paginator extends HTMLElement {
         }
         this.dispatchEvent(new CustomEvent('relocate', { detail }))
     }
+    /** 显示某个章节，返回是否真的显示成功（空章节 / 加载失败返回 false） */
     async #display(promise) {
         const result = await promise
         // [shuge] 章节加载失败时 #goTo 的 catch 会解析为 null，
         // 必须早退并保留旧 #index —— 否则 #index 变 undefined，
         // #adjacentIndex 变 NaN、atEnd 恒 true，翻页永久失效
-        if (result == null || result.index == null) return
+        if (result == null || result.index == null) return false
         const { index, src, anchor, onLoad, select } = result
         // [shuge] 滚动模式走连续多视图路径（章节由 #displayScrolled 自行加载）
         if (this.scrolled) {
             await this.#displayScrolled(index, anchor, select)
-            return
+            return true
         }
-        this.#index = index
+        const sameSection = index === this.#index
+        // [shuge] 目标章节没有内容可显示（空文件、zip 里缺该条目：
+        // Loader.loadReplaced 会解析为 null）。原实现会先把 #index 推到目标章节，
+        // 再拿**旧章节的 view** 执行 scrollToAnchor(0)：画面跳回上一章开头，
+        // 而 #index 与视图从此错位（后续翻页在旧章内容里走，进度却算新章）。
+        // 现在原地返回 false，#index 与旧视图都不动，交给 #goTo 决定跳过。
+        // 注意判断要放在推进 #index 之前——旧视图还活着是这里唯一的差别。
+        if (!src && !sameSection) return false
         const hasFocus = this.#view?.document?.hasFocus()
+        // 先推进 #index 再加载：加载期间 expand/relocate 都拿它算章节号与进度，
+        // 拖到加载后会让首章出现 index=-1 的 relocate（sections[-1] 未定义）
+        this.#index = index
         if (src) {
             const view = this.#createView()
             const afterLoad = doc => {
@@ -1210,7 +1221,15 @@ export class Paginator extends HTMLElement {
                 onLoad?.({ doc, index })
             }
             const beforeRender = this.#beforeRender.bind(this)
-            await view.load(src, afterLoad, beforeRender)
+            try {
+                await view.load(src, afterLoad, beforeRender)
+            } catch (e) {
+                // [shuge] 章节文档本身加载失败：#createView 已经把旧视图换掉，
+                // 没有可回退的画面。返回 false 让 #goTo 沿原方向跳过，
+                // 下一次 #createView 会回收这个坏视图。
+                console.warn('[shuge] section view load failed', e)
+                return false
+            }
             this.dispatchEvent(new CustomEvent('create-overlayer', {
                 detail: {
                     doc: view.document, index,
@@ -1222,6 +1241,7 @@ export class Paginator extends HTMLElement {
         await this.scrollToAnchor((typeof anchor === 'function'
             ? anchor(this.#view.document) : anchor) ?? 0, select)
         if (hasFocus) this.focusView()
+        return true
     }
     // [shuge] ================= 连续滚动多视图（滚动模式专用） =================
 
@@ -1437,23 +1457,38 @@ export class Paginator extends HTMLElement {
             await this.#displayScrolled(index, anchor, select)
             return
         }
-        if (index === this.#index) await this.#display({ index, anchor, select })
-        else {
-            const oldIndex = this.#index
-            const onLoad = detail => {
-                this.sections[oldIndex]?.unload?.()
-                this.setStyles(this.#styles)
-                this.dispatchEvent(new CustomEvent('load', { detail }))
-            }
-            await this.#display(Promise.resolve(this.sections[index].load())
-                .then(src => ({ index, src, anchor, onLoad, select }))
-                .catch(e => {
-                    console.warn(e)
-                    console.warn(new Error(`Failed to load section ${index}`))
-                    // [shuge] 原实现返回 {}，导致 #display 把 #index 写成 undefined、
-                    // 翻页从此永久失效；改为解析为 null，#display 早退并停留旧章节
-                    return null
-                }))
+        const dir = index > this.#index ? 1 : index < this.#index ? -1 : 0
+        const oldIndex = this.#index
+        const onLoad = detail => {
+            this.sections[oldIndex]?.unload?.()
+            this.setStyles(this.#styles)
+            this.dispatchEvent(new CustomEvent('load', { detail }))
+        }
+        // [shuge] 空章节（空文件 / zip 缺条目）没有内容可显示，#display 会返回
+        // false。沿原方向跳过，最多走完整本书——否则用户会卡在这种过渡章节上：
+        // 以前的表现是「翻到下一章却跳回上一章开头」，然后怎么也翻不过去。
+        let target = index
+        let targetAnchor = anchor
+        for (let step = 0; step <= this.sections.length; step++) {
+            const section = this.sections[target]
+            if (!section) return
+            const ok = target === this.#index
+                ? await this.#display({ index: target, anchor: targetAnchor, select })
+                : await this.#display(Promise.resolve(section.load())
+                    .then(src => ({ index: target, src, anchor: targetAnchor, onLoad, select }))
+                    .catch(e => {
+                        console.warn(e)
+                        console.warn(new Error(`Failed to load section ${target}`))
+                        return null
+                    }))
+            if (ok) return
+            if (!dir) return
+            const next = this.#adjacentIndex(dir, target)
+            if (next == null) return
+            target = next
+            // 被跳过的章节没有可用锚点，落点按方向取章首 / 章末
+            targetAnchor = dir > 0 ? () => 0 : () => 1
+            select = false
         }
     }
     async goTo(target) {
